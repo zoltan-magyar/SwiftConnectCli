@@ -1,0 +1,33 @@
+# clangd configuration for OpenConnect Swift CLI
+# This helps IDEs/editors find the OpenConnect headers on macOS
+# On Linux, these Homebrew paths will be ignored and standard system paths are used
+
+CompileFlags:
+  Add:
+    # Project includes
+    - -ISources/COpenConnect/include
+
+    # macOS Homebrew paths (ignored on Linux if they don't exist)
+    - -I/opt/homebrew/opt/openconnect/include
+    - -I/opt/homebrew/opt/gnutls/include
+    - -I/opt/homebrew/opt/libtasn1/include
+    - -I/opt/homebrew/opt/libidn2/include
+    - -I/opt/homebrew/opt/p11-kit/include/p11-kit-1
+    - -I/opt/homebrew/opt/stoken/include
+    - -I/opt/homebrew/opt/nettle/include
+    - -I/opt/homebrew/opt/gmp/include
+
+    # Intel Mac Homebrew paths (for compatibility)
+    - -I/usr/local/opt/openconnect/include
+    - -I/usr/local/opt/gnutls/include
+    - -I/usr/local/opt/libtasn1/include
+    - -I/usr/local/opt/libidn2/include
+    - -I/usr/local/opt/p11-kit/include/p11-kit-1
+    - -I/usr/local/opt/stoken/include
+    - -I/usr/local/opt/nettle/include
+    - -I/usr/local/opt/gmp/include
+
+    - -xc
+
+If:
+  PathMatch: .*\.(c|h)$
