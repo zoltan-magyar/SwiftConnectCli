@@ -5,7 +5,8 @@ let package = Package(
     name: "SwiftConnectCli",
     platforms: [.macOS(.v13)],
     products: [
-        .executable(name: "swiftconnect-cli", targets: ["SwiftConnectCli"])
+        .library(name: "OpenConnectKit", targets: ["OpenConnectKit"]),
+        .executable(name: "swiftconnect-cli", targets: ["SwiftConnectCli"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0")
@@ -25,10 +26,15 @@ let package = Package(
             name: "COpenConnect",
             dependencies: ["COpenConnectLib"]
         ),
+        // Swift library wrapping OpenConnect with Swift-native API
+        .target(
+            name: "OpenConnectKit",
+            dependencies: ["COpenConnect"]
+        ),
         .executableTarget(
             name: "SwiftConnectCli",
             dependencies: [
-                "COpenConnect",
+                "OpenConnectKit",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ]
         ),
