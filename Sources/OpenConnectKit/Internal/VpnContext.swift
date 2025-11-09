@@ -76,6 +76,19 @@ internal class VpnContext {
   /// Lock for synchronizing access to mainloop state.
   internal let mainloopLock = NSLock()
 
+  /// Last error that occurred during TUN device setup.
+  ///
+  /// This matches the pattern used by OpenConnect GUI, where errors in the
+  /// setup_tun callback are stored here since the callback returns void.
+  internal var lastError: String?
+
+  /// Flag indicating whether disconnect was intentional (user-initiated).
+  ///
+  /// This is used to prevent calling the onDisconnect callback twice when
+  /// the user explicitly calls disconnect() - once in disconnect() and once
+  /// when the mainloop exits.
+  internal var intentionalDisconnect: Bool = false
+
   // MARK: - Command Constants
 
   /// Command byte to cancel the connection and log off.
@@ -145,6 +158,7 @@ internal class VpnContext {
     // Register callback handlers
     openconnect_set_reconnected_handler(vpnInfo, reconnectedCallback)
     openconnect_set_stats_handler(vpnInfo, statsCallback)
+    openconnect_set_setup_tun_handler(vpnInfo, setupTunCallback)
   }
 
   deinit {

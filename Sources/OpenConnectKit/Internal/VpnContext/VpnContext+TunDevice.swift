@@ -11,80 +11,22 @@ import Foundation
 // MARK: - TUN Device Management
 
 extension VpnContext {
-  /// Sets up the TUN device for routing VPN traffic.
-  ///
-  /// This method configures the network tunnel interface that will be used to route
-  /// packets through the VPN. It calls `openconnect_setup_tun_device()` which:
-  /// 1. Creates a TUN/TAP device (or uses an existing one)
-  /// 2. Runs the vpnc-script to configure routes and DNS
-  /// 3. Prepares the device for packet routing
-  ///
-  /// - Returns: `0` on success, non-zero on failure
-  /// - Throws: `VpnError.vpncScriptFailed` if the vpnc-script cannot be found or executed
-  internal func setupTunDevice() throws -> Int32 {
-    guard let vpnInfo = self.vpnInfo else {
-      return -1
-    }
-
-    // Find or validate vpnc-script path
-    // Note: openconnect_setup_tun_device requires a valid script path, not NULL
-    let vpncScriptPath = try findVpncScript()
-    let vpncScriptPtr = vpncScriptPath.withCString { strdup($0) }
-
-    let interfaceNamePtr = configuration.interfaceName?.withCString { strdup($0) }
-
-    defer {
-      // Free any duplicated strings
-      if let ptr = vpncScriptPtr {
-        free(ptr)
-      }
-      if let ptr = interfaceNamePtr {
-        free(ptr)
-      }
-    }
-
-    // Call OpenConnect to setup the TUN device
-    // Parameters: vpninfo, vpnc_script (required), interface_name (optional)
-    let ret = openconnect_setup_tun_device(vpnInfo, vpncScriptPtr, interfaceNamePtr)
-
-    return ret
-  }
-
   /// Finds the vpnc-script in common installation locations.
-  ///
-  /// This method searches for the vpnc-script in platform-specific default locations:
-  /// - **macOS (Homebrew)**: `/opt/homebrew/etc/vpnc-scripts/vpnc-script`, `/usr/local/etc/vpnc-scripts/vpnc-script`
-  /// - **Linux**: `/etc/vpnc/vpnc-script`, `/usr/share/vpnc-scripts/vpnc-script`
-  ///
-  /// TODO: Enhance this to support more installation methods and platforms:
-  /// - Check environment variables (e.g., VPNC_SCRIPT)
-  /// - Support custom script locations per distro
-  /// - Windows TAP adapter script location
-  /// - Flatpak/Snap isolated installations
-  ///
-  /// - Returns: The path to a valid vpnc-script
-  /// - Throws: `VpnError.vpncScriptFailed` if no valid script is found
-  private func findVpncScript() throws -> String {
-    // If explicitly configured, use that path
+  internal func findVpncScript() throws -> String {
+    // Use configured path if provided
     if let configuredPath = configuration.vpncScript {
-      if FileManager.default.isExecutableFile(atPath: configuredPath) {
-        return configuredPath
-      } else {
+      guard FileManager.default.isExecutableFile(atPath: configuredPath) else {
         throw VpnError.vpncScriptFailed
       }
+      return configuredPath
     }
 
     // Search common locations
     let commonPaths = [
-      // macOS Homebrew (Apple Silicon)
       "/opt/homebrew/etc/vpnc-scripts/vpnc-script",
-      // macOS Homebrew (Intel)
       "/usr/local/etc/vpnc-scripts/vpnc-script",
-      // Linux (Arch, Fedora, etc.)
       "/usr/share/vpnc-scripts/vpnc-script",
-      // Linux (Debian, Ubuntu, etc.)
       "/etc/vpnc/vpnc-script",
-      // Alternative Linux location
       "/usr/local/share/vpnc-scripts/vpnc-script",
     ]
 
@@ -94,7 +36,38 @@ extension VpnContext {
       }
     }
 
-    // No valid script found
     throw VpnError.vpncScriptFailed
+  }
+}
+
+// MARK: - C Callback
+
+/// C callback invoked by OpenConnect to set up the TUN device.
+internal func setupTunCallback(privdata: UnsafeMutableRawPointer?) {
+  guard let privdata = privdata else {
+    return
+  }
+
+  let context = Unmanaged<VpnContext>.fromOpaque(privdata).takeUnretainedValue()
+
+  // Find vpnc-script path
+  guard let vpncScriptPath = try? context.findVpncScript() else {
+    context.lastError = "Failed to find vpnc-script"
+    return
+  }
+
+  // Prepare C strings
+  let vpncScriptPtr = vpncScriptPath.withCString { strdup($0) }
+  let interfaceNamePtr = context.configuration.interfaceName?.withCString { strdup($0) }
+
+  defer {
+    free(vpncScriptPtr)
+    free(interfaceNamePtr)
+  }
+
+  // Setup TUN device
+  let ret = openconnect_setup_tun_device(context.vpnInfo, vpncScriptPtr, interfaceNamePtr)
+  if ret != 0 {
+    context.lastError = "TUN device setup failed with code: \(ret)"
   }
 }

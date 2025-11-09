@@ -17,7 +17,7 @@ extension VpnContext {
   /// 1. Obtains an authentication cookie from the server
   /// 2. Establishes the CSTP (Control and Provisioning of Wireless Access Points) connection
   /// 3. Sets up DTLS (Datagram Transport Layer Security) for the data channel
-  /// 4. Configures the TUN device for routing VPN traffic
+  /// 4. TUN device setup (handled automatically by OpenConnect via callback)
   /// 5. Starts the mainloop to handle VPN traffic
   ///
   /// - Throws: `VpnError` if any connection step fails
@@ -48,11 +48,11 @@ extension VpnContext {
       throw VpnError.dtlsSetupFailed
     }
 
-    // Step 4: Setup TUN device for routing VPN traffic
-    ret = try setupTunDevice()
-    if ret != 0 {
-      throw VpnError.tunSetupFailed
-    }
+    // Step 4: TUN device setup
+    // The TUN device will be set up automatically by OpenConnect via the callback
+    // we registered in initialization (setupTunCallback). OpenConnect will call
+    // this callback at the appropriate time, after authentication and after
+    // receiving network configuration from the server.
 
     // Step 5: Start the mainloop to handle VPN traffic
     startMainloop()
@@ -76,6 +76,9 @@ extension VpnContext {
     guard isConnected else {
       return
     }
+
+    // Mark this as intentional so we don't report it as an error
+    intentionalDisconnect = true
 
     // Stop the mainloop if it's running
     stopMainloop()

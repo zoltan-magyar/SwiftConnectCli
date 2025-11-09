@@ -93,7 +93,7 @@ extension VpnContext {
     }
 
     // Call the OpenConnect mainloop with reconnection parameters
-    let ret = openconnect_mainloop(
+    _ = openconnect_mainloop(
       vpnInfo,
       configuration.reconnectTimeout,
       configuration.reconnectInterval
@@ -104,10 +104,15 @@ extension VpnContext {
     isMainloopRunning = false
     mainloopLock.unlock()
 
-    // Log the exit reason
-    session?.context?.handleProgress(
-      level: 1,  // INFO level
-      message: "Mainloop exited with code: \(ret)"
-    )
+    // Only notify if this wasn't an intentional disconnect
+    if !intentionalDisconnect {
+      // Notify session of disconnection with error if available
+      let disconnectReason = lastError
+      session?.handleDisconnect(reason: disconnectReason)
+    }
+
+    // Clear the error and reset flag
+    lastError = nil
+    intentionalDisconnect = false
   }
 }

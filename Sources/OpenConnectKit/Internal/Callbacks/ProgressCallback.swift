@@ -33,7 +33,12 @@ internal func progressCallback(
   }
 
   let context = Unmanaged<VpnContext>.fromOpaque(privdata).takeUnretainedValue()
-  let message = String(cString: formatted_message)
+  var message = String(cString: formatted_message)
+
+  // OpenConnect messages often include a trailing newline - strip it to avoid double newlines
+  if message.hasSuffix("\n") {
+    message = String(message.dropLast())
+  }
 
   context.handleProgress(level: level, message: message)
 }

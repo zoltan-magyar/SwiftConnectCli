@@ -165,6 +165,15 @@ struct Cli: ParsableCommand {
       print("   Total: \(stats.formattedTotalBytes)")
     }
 
+    // Set up disconnect handler
+    session.onDisconnect = { reason in
+      if let reason = reason {
+        print("\n❌ Disconnected due to error: \(reason)")
+      } else {
+        print("\n✅ Disconnected")
+      }
+    }
+
     print("Connecting to VPN...")
 
     // Set up signal handler for graceful shutdown

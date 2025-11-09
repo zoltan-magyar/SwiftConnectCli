@@ -111,6 +111,23 @@ public class VpnSession {
   /// - Parameter stats: Current VPN traffic statistics
   public var onStats: ((VpnStats) -> Void)?
 
+  /// Called when the VPN connection is disconnected.
+  ///
+  /// This callback is triggered when the mainloop exits, either due to:
+  /// - User calling `disconnect()`
+  /// - Connection failure
+  /// - Network interruption
+  /// - Server disconnecting
+  ///
+  /// The optional `reason` parameter contains error details if the disconnect
+  /// was due to a failure (e.g., TUN device setup error). It will be `nil`
+  /// for normal disconnections.
+  ///
+  /// If not set, disconnection events are silently ignored.
+  ///
+  /// - Parameter reason: Optional error message describing why the disconnect occurred
+  public var onDisconnect: ((String?) -> Void)?
+
   // MARK: - Internal Properties
 
   /// Internal context managing the OpenConnect connection.
@@ -163,6 +180,9 @@ public class VpnSession {
     context?.disconnect()
     context = nil
     isConnected = false
+
+    // Notify that we disconnected intentionally (no error)
+    onDisconnect?(nil)
   }
 
   /// Requests traffic statistics from the VPN connection.
@@ -256,5 +276,14 @@ public class VpnSession {
   /// - Parameter stats: The VPN traffic statistics
   internal func handleStats(_ stats: VpnStats) {
     onStats?(stats)
+  }
+
+  /// Handles disconnection notification from OpenConnect.
+  ///
+  /// This is called by the internal context when the mainloop exits.
+  ///
+  /// - Parameter reason: Optional error message if disconnect was due to failure
+  internal func handleDisconnect(reason: String?) {
+    onDisconnect?(reason)
   }
 }
