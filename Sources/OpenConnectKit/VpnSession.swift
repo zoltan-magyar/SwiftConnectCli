@@ -41,6 +41,24 @@ public class VpnSession {
     /// Whether the VPN is currently connected.
     public private(set) var isConnected: Bool = false
 
+    /// The name of the network interface assigned to the VPN tunnel.
+    ///
+    /// This property returns the interface name (e.g., "tun0", "utun0") after
+    /// the TUN device has been successfully set up. Returns `nil` before connection
+    /// or if the TUN device hasn't been configured yet.
+    public var interfaceName: String? {
+        return context?.assignedInterfaceName
+    }
+
+    /// Whether the OpenConnect mainloop is currently running.
+    ///
+    /// The mainloop handles VPN traffic routing and runs on a background thread.
+    /// This will be `true` after successful connection and `false` when disconnected
+    /// or if the connection hasn't been established yet.
+    public var isMainloopRunning: Bool {
+        return context?.mainloopRunning ?? false
+    }
+
     // MARK: - Callback Handlers
 
     /// Called when the server certificate needs validation.
@@ -69,6 +87,29 @@ public class VpnSession {
     ///   - message: The log message
     ///   - level: The log level
     public var onLog: ((String, LogLevel) -> Void)?
+
+    /// Called when the VPN connection is automatically reconnected.
+    ///
+    /// This callback is triggered when OpenConnect successfully reconnects
+    /// after a connection loss (e.g., network interruption, server restart).
+    /// It will not be called on the initial connection, only on reconnections.
+    ///
+    /// If not set, reconnection events are silently ignored.
+    public var onReconnected: (() -> Void)?
+
+    /// Called when traffic statistics are received.
+    ///
+    /// This callback is triggered when statistics are requested via `requestStats()`
+    /// and the mainloop reports the current traffic data. Statistics include:
+    /// - Bytes and packets transmitted (sent)
+    /// - Bytes and packets received
+    ///
+    /// Statistics are cumulative since the connection was established.
+    ///
+    /// If not set, statistics are silently ignored.
+    ///
+    /// - Parameter stats: Current VPN traffic statistics
+    public var onStats: ((VpnStats) -> Void)?
 
     // MARK: - Internal Properties
 
@@ -124,6 +165,26 @@ public class VpnSession {
         isConnected = false
     }
 
+    /// Requests traffic statistics from the VPN connection.
+    ///
+    /// This method sends a command to the mainloop to gather and report
+    /// current traffic statistics. The statistics will be delivered via
+    /// the `onStats` callback (configured in Step 6).
+    ///
+    /// Statistics include:
+    /// - Bytes sent/received
+    /// - Packets sent/received
+    ///
+    /// - Returns: `true` if the request was sent successfully, `false` otherwise
+    @discardableResult
+    public func requestStats() -> Bool {
+        guard isConnected else {
+            return false
+        }
+
+        return context?.requestStats() ?? false
+    }
+
     // MARK: - Internal Methods
 
     /// Handles progress logging from OpenConnect.
@@ -177,5 +238,23 @@ public class VpnSession {
 
             return filledForm
         }
+    }
+
+    /// Handles reconnection notification from OpenConnect.
+    ///
+    /// This is called by the internal context when OpenConnect successfully
+    /// reconnects after a connection loss.
+    internal func handleReconnected() {
+        onReconnected?()
+    }
+
+    /// Handles statistics notification from OpenConnect.
+    ///
+    /// This is called by the internal context when statistics are received
+    /// from the mainloop.
+    ///
+    /// - Parameter stats: The VPN traffic statistics
+    internal func handleStats(_ stats: VpnStats) {
+        onStats?(stats)
     }
 }

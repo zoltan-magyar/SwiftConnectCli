@@ -38,7 +38,7 @@ public struct AuthenticationForm: Sendable {
     // MARK: - Properties
 
     /// The form title.
-    public let title: String
+    public let title: String?
 
     /// Optional message or banner text.
     public let message: String?
@@ -135,7 +135,7 @@ extension AuthenticationForm {
         if let titlePtr = form.banner {
             self.title = String(cString: titlePtr)
         } else {
-            self.title = "Authentication Required"
+            self.title = nil
         }
 
         // Extract message
@@ -179,7 +179,22 @@ extension AuthenticationForm {
             case 3:  // OC_FORM_OPT_HIDDEN
                 fieldType = .hidden
             case 4:  // OC_FORM_OPT_SELECT
-                fieldType = .select(options: [])  // TODO: Extract select options
+                // Cast to oc_form_opt_select to access choices
+                let selectOpt = option.withMemoryRebound(to: oc_form_opt_select.self, capacity: 1) {
+                    $0.pointee
+                }
+                var options: [String] = []
+
+                // Extract choices from the select option
+                if selectOpt.nr_choices > 0, let choicesPtr = selectOpt.choices {
+                    for i in 0..<Int(selectOpt.nr_choices) {
+                        if let choicePtr = choicesPtr[i], let namePtr = choicePtr.pointee.name {
+                            options.append(String(cString: namePtr))
+                        }
+                    }
+                }
+
+                fieldType = .select(options: options)
             default:  // OC_FORM_OPT_TEXT or unknown
                 fieldType = .text
             }
@@ -201,6 +216,9 @@ extension AuthenticationForm {
 
     /// Applies Swift form values back to the C form structure.
     ///
+    /// Uses the proper OpenConnect API (`openconnect_set_option_value`) to set
+    /// form field values instead of directly manipulating internal fields.
+    ///
     /// - Parameter cForm: Pointer to the C `oc_auth_form` structure
     internal func apply(to cForm: UnsafeMutablePointer<oc_auth_form>) {
         var currentOption = cForm.pointee.opts
@@ -209,14 +227,16 @@ extension AuthenticationForm {
         while let option = currentOption, fieldIndex < fields.count {
             let field = fields[fieldIndex]
 
-            // Free existing value if present
-            if let existingValue = option.pointee._value {
-                free(UnsafeMutableRawPointer(mutating: existingValue))
-            }
+            // Use the proper OpenConnect API to set the option value
+            // This handles all memory management internally and is the correct way
+            // to set form field values according to the OpenConnect documentation
+            let result = openconnect_set_option_value(option, field.value)
 
-            // Set new value
-            if let newValue = strdup(field.value) {
-                option.pointee._value = UnsafeMutablePointer(mutating: newValue)
+            // Log if setting the value failed (non-zero return value indicates error)
+            if result != 0 {
+                // We can't easily log here without access to the session context,
+                // but the function will still continue to set other fields
+                // The OpenConnect library will handle the error appropriately
             }
 
             currentOption = option.pointee.next

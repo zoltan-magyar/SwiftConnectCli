@@ -43,6 +43,15 @@ public enum VpnError: Error {
 
     /// Operation cancelled by user.
     case cancelled
+
+    /// Failed to setup command pipe for controlling the VPN connection.
+    case cmdPipeSetupFailed
+
+    /// Failed to setup TUN device.
+    case tunSetupFailed
+
+    /// Failed to find or execute vpnc-script.
+    case vpncScriptFailed
 }
 
 // MARK: - LocalizedError
@@ -69,6 +78,12 @@ extension VpnError: LocalizedError {
             return "VPN context not initialized"
         case .cancelled:
             return "Operation cancelled"
+        case .cmdPipeSetupFailed:
+            return "Failed to setup command pipe for VPN control"
+        case .tunSetupFailed:
+            return "Failed to setup TUN device for VPN tunnel"
+        case .vpncScriptFailed:
+            return "Failed to find or execute vpnc-script"
         }
     }
 }
