@@ -1,9 +1,13 @@
 {
-  "languages": {
-    "C": {
-      "language_servers": ["clangd"],
-      "format_on_save": "on",
-      "tab_size": 4
+    "languages": {
+        "C": {
+            "language_servers": ["clangd"],
+            "format_on_save": "on",
+            "tab_size": 4
+        },
+        "Swift": {
+            "format_on_save": "on",
+            "tab_size": 2
+        }
     }
-  }
 }
