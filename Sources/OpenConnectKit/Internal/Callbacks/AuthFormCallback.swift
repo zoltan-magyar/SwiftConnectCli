@@ -28,14 +28,10 @@ internal func processAuthFormCallback(
   }
 
   guard let form = form else {
-    return 0
-  }
-
-  let session = Unmanaged<VpnSession>.fromOpaque(privdata).takeUnretainedValue()
-
-  guard let context = session.context else {
     return 1
   }
+
+  let context = Unmanaged<VpnContext>.fromOpaque(privdata).takeUnretainedValue()
 
   return context.handleAuthenticationForm(form: form)
 }

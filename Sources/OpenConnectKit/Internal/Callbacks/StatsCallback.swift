@@ -13,7 +13,7 @@ import Foundation
 /// Handles traffic statistics notifications from the OpenConnect C library.
 ///
 /// This function is called by OpenConnect when statistics are requested via
-/// the `OC_CMD_STATS` command sent through cmd_fd. It extracts the `VpnSession`
+/// the `OC_CMD_STATS` command sent through cmd_fd. It extracts the `VpnContext`
 /// from the `privdata` pointer, converts the C `oc_stats` structure to a Swift
 /// `VpnStats` model, and delegates to the session's stats handler.
 ///
@@ -21,7 +21,7 @@ import Foundation
 /// be triggered whenever `requestStats()` is called.
 ///
 /// - Parameters:
-///   - privdata: Pointer to the owning `VpnSession`
+///   - privdata: Pointer to the `VpnContext` managing the OpenConnect connection
 ///   - stats: Pointer to the C `oc_stats` structure containing traffic data
 internal func statsCallback(
   privdata: UnsafeMutableRawPointer?,
@@ -35,7 +35,8 @@ internal func statsCallback(
     return
   }
 
-  let session = Unmanaged<VpnSession>.fromOpaque(privdata).takeUnretainedValue()
+  let context = Unmanaged<VpnContext>.fromOpaque(privdata).takeUnretainedValue()
+  guard let session = context.session else { return }
 
   // Convert C stats to Swift VpnStats
   let vpnStats = VpnStats(

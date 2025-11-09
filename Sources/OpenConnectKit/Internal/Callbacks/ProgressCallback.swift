@@ -13,11 +13,11 @@ import Foundation
 /// Handles progress/log messages from the OpenConnect C library.
 ///
 /// This function is called from the C shim (`progress_shim_callback`) after it formats
-/// the variadic arguments into a string. The function extracts the `VpnSession` from
+/// the variadic arguments into a string. The function extracts the `VpnContext` from
 /// the `privdata` pointer and delegates to its progress handler.
 ///
 /// - Parameters:
-///   - privdata: Pointer to the owning `VpnSession`
+///   - privdata: Pointer to the `VpnContext` managing the OpenConnect connection
 ///   - level: The C log level (0=error, 1=info, 2=debug, 3=trace)
 ///   - formatted_message: The formatted message string
 @_cdecl("progressCallback")
@@ -32,8 +32,8 @@ internal func progressCallback(
     return
   }
 
-  let session = Unmanaged<VpnSession>.fromOpaque(privdata).takeUnretainedValue()
+  let context = Unmanaged<VpnContext>.fromOpaque(privdata).takeUnretainedValue()
   let message = String(cString: formatted_message)
 
-  session.context?.handleProgress(level: level, message: message)
+  context.handleProgress(level: level, message: message)
 }

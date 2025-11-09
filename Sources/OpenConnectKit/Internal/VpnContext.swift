@@ -106,13 +106,14 @@ internal class VpnContext {
     self.configuration = configuration
 
     // Create OpenConnect vpninfo structure with callbacks
+    // Pass VpnContext (self) as privdata since it manages the OpenConnect resources
     self.vpnInfo = openconnect_vpninfo_new(
       "AnyConnect Compatible OpenConnectKit Client",
       validatePeerCertCallback,
       nil,
       processAuthFormCallback,
       get_progress_shim_callback(),
-      Unmanaged.passUnretained(session).toOpaque()
+      Unmanaged.passUnretained(self).toOpaque()
     )
 
     guard let vpnInfo = self.vpnInfo else {
