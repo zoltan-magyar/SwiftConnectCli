@@ -25,44 +25,44 @@ import Foundation
 /// }
 /// ```
 public struct CertificateInfo: Sendable {
-    // MARK: - Properties
+  // MARK: - Properties
 
-    /// The validation failure reason provided by OpenConnect.
-    ///
-    /// This describes why the certificate failed validation (e.g., expired,
-    /// self-signed, hostname mismatch).
-    public let reason: String
+  /// The validation failure reason provided by OpenConnect.
+  ///
+  /// This describes why the certificate failed validation (e.g., expired,
+  /// self-signed, hostname mismatch).
+  public let reason: String
 
-    /// The server hostname, if available.
-    public let hostname: String?
+  /// The server hostname, if available.
+  public let hostname: String?
 
-    /// Raw certificate data, if available.
-    public let rawData: Data?
+  /// Raw certificate data, if available.
+  public let rawData: Data?
 
-    // MARK: - Initialization
+  // MARK: - Initialization
 
-    /// Creates certificate information.
-    ///
-    /// - Parameters:
-    ///   - reason: The validation failure reason
-    ///   - hostname: The server hostname (optional)
-    ///   - rawData: Raw certificate data (optional)
-    public init(reason: String, hostname: String? = nil, rawData: Data? = nil) {
-        self.reason = reason
-        self.hostname = hostname
-        self.rawData = rawData
+  /// Creates certificate information.
+  ///
+  /// - Parameters:
+  ///   - reason: The validation failure reason
+  ///   - hostname: The server hostname (optional)
+  ///   - rawData: Raw certificate data (optional)
+  public init(reason: String, hostname: String? = nil, rawData: Data? = nil) {
+    self.reason = reason
+    self.hostname = hostname
+    self.rawData = rawData
+  }
+
+  /// Creates certificate information from a C string pointer.
+  ///
+  /// - Parameter cReason: C string pointer to the failure reason
+  internal init(from cReason: UnsafePointer<CChar>?) {
+    if let cReason = cReason {
+      self.reason = String(cString: cReason)
+    } else {
+      self.reason = "Unknown certificate validation error"
     }
-
-    /// Creates certificate information from a C string pointer.
-    ///
-    /// - Parameter cReason: C string pointer to the failure reason
-    internal init(from cReason: UnsafePointer<CChar>?) {
-        if let cReason = cReason {
-            self.reason = String(cString: cReason)
-        } else {
-            self.reason = "Unknown certificate validation error"
-        }
-        self.hostname = nil
-        self.rawData = nil
-    }
+    self.hostname = nil
+    self.rawData = nil
+  }
 }

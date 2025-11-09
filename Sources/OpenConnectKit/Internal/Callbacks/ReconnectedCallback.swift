@@ -21,10 +21,10 @@ import Foundation
 ///
 /// - Parameter privdata: Pointer to the owning `VpnSession`
 internal func reconnectedCallback(privdata: UnsafeMutableRawPointer?) {
-    guard let privdata = privdata else {
-        return
-    }
+  guard let privdata = privdata else {
+    return
+  }
 
-    let session = Unmanaged<VpnSession>.fromOpaque(privdata).takeUnretainedValue()
-    session.handleReconnected()
+  let session = Unmanaged<VpnSession>.fromOpaque(privdata).takeUnretainedValue()
+  session.handleReconnected()
 }

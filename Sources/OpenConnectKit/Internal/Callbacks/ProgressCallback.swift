@@ -22,18 +22,18 @@ import Foundation
 ///   - formatted_message: The formatted message string
 @_cdecl("progressCallback")
 internal func progressCallback(
-    privdata: UnsafeMutableRawPointer?, level: CInt, formatted_message: UnsafePointer<CChar>?
+  privdata: UnsafeMutableRawPointer?, level: CInt, formatted_message: UnsafePointer<CChar>?
 ) {
-    guard let privdata = privdata else {
-        return
-    }
+  guard let privdata = privdata else {
+    return
+  }
 
-    guard let formatted_message = formatted_message else {
-        return
-    }
+  guard let formatted_message = formatted_message else {
+    return
+  }
 
-    let session = Unmanaged<VpnSession>.fromOpaque(privdata).takeUnretainedValue()
-    let message = String(cString: formatted_message)
+  let session = Unmanaged<VpnSession>.fromOpaque(privdata).takeUnretainedValue()
+  let message = String(cString: formatted_message)
 
-    session.context?.handleProgress(level: level, message: message)
+  session.context?.handleProgress(level: level, message: message)
 }

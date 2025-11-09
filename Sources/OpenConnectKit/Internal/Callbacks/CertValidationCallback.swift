@@ -19,18 +19,18 @@ import Foundation
 ///   - reason: C string pointer describing the validation failure reason
 /// - Returns: `0` to accept the certificate, `1` to reject it
 internal func validatePeerCertCallback(
-    privdata: UnsafeMutableRawPointer?,
-    reason: UnsafePointer<CChar>?
+  privdata: UnsafeMutableRawPointer?,
+  reason: UnsafePointer<CChar>?
 ) -> CInt {
-    guard let privdata = privdata else {
-        return 1
-    }
+  guard let privdata = privdata else {
+    return 1
+  }
 
-    let session = Unmanaged<VpnSession>.fromOpaque(privdata).takeUnretainedValue()
+  let session = Unmanaged<VpnSession>.fromOpaque(privdata).takeUnretainedValue()
 
-    guard let context = session.context else {
-        return 1
-    }
+  guard let context = session.context else {
+    return 1
+  }
 
-    return context.handleCertificateValidation(reason: reason)
+  return context.handleCertificateValidation(reason: reason)
 }

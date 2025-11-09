@@ -20,22 +20,22 @@ import Foundation
 ///   - form: Pointer to the C `oc_auth_form` structure to be filled
 /// - Returns: `0` for success, `1` for failure
 internal func processAuthFormCallback(
-    privdata: UnsafeMutableRawPointer?,
-    form: UnsafeMutablePointer<oc_auth_form>?
+  privdata: UnsafeMutableRawPointer?,
+  form: UnsafeMutablePointer<oc_auth_form>?
 ) -> CInt {
-    guard let privdata = privdata else {
-        return 1
-    }
+  guard let privdata = privdata else {
+    return 1
+  }
 
-    guard let form = form else {
-        return 0
-    }
+  guard let form = form else {
+    return 0
+  }
 
-    let session = Unmanaged<VpnSession>.fromOpaque(privdata).takeUnretainedValue()
+  let session = Unmanaged<VpnSession>.fromOpaque(privdata).takeUnretainedValue()
 
-    guard let context = session.context else {
-        return 1
-    }
+  guard let context = session.context else {
+    return 1
+  }
 
-    return context.handleAuthenticationForm(form: form)
+  return context.handleAuthenticationForm(form: form)
 }

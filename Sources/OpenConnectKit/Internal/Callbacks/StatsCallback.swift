@@ -24,26 +24,26 @@ import Foundation
 ///   - privdata: Pointer to the owning `VpnSession`
 ///   - stats: Pointer to the C `oc_stats` structure containing traffic data
 internal func statsCallback(
-    privdata: UnsafeMutableRawPointer?,
-    stats: UnsafePointer<oc_stats>?
+  privdata: UnsafeMutableRawPointer?,
+  stats: UnsafePointer<oc_stats>?
 ) {
-    guard let privdata = privdata else {
-        return
-    }
+  guard let privdata = privdata else {
+    return
+  }
 
-    guard let stats = stats else {
-        return
-    }
+  guard let stats = stats else {
+    return
+  }
 
-    let session = Unmanaged<VpnSession>.fromOpaque(privdata).takeUnretainedValue()
+  let session = Unmanaged<VpnSession>.fromOpaque(privdata).takeUnretainedValue()
 
-    // Convert C stats to Swift VpnStats
-    let vpnStats = VpnStats(
-        txPackets: stats.pointee.tx_pkts,
-        txBytes: stats.pointee.tx_bytes,
-        rxPackets: stats.pointee.rx_pkts,
-        rxBytes: stats.pointee.rx_bytes
-    )
+  // Convert C stats to Swift VpnStats
+  let vpnStats = VpnStats(
+    txPackets: stats.pointee.tx_pkts,
+    txBytes: stats.pointee.tx_bytes,
+    rxPackets: stats.pointee.rx_pkts,
+    rxBytes: stats.pointee.rx_bytes
+  )
 
-    session.handleStats(vpnStats)
+  session.handleStats(vpnStats)
 }
