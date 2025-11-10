@@ -15,14 +15,46 @@ import OpenConnectKit
   import Glibc
 #endif
 
-// Global flag for signal handling (must be global for C signal handler)
-private var shouldExitGlobal: Bool = false
+// MARK: - Verbosity Level
+
+/// CLI flag for OpenConnect verbosity level.
+enum VerbosityLevel: String, EnumerableFlag {
+  case info
+  case debug
+  case trace
+
+  static func name(for value: VerbosityLevel) -> NameSpecification {
+    switch value {
+    case .info: return .customLong("oc-info")
+    case .debug: return .customLong("oc-debug")
+    case .trace: return .customLong("oc-trace")
+    }
+  }
+
+  static func help(for value: VerbosityLevel) -> ArgumentHelp? {
+    switch value {
+    case .info: return "OpenConnect INFO level (default)"
+    case .debug: return "OpenConnect DEBUG level"
+    case .trace: return "OpenConnect TRACE level"
+    }
+  }
+}
 
 @main
 struct Cli: ParsableCommand {
+  // Signal sources for handling Ctrl+C and termination
+  private static var signalSources: [DispatchSourceSignal] = []
   static let configuration = CommandConfiguration(
-    commandName: "openconnect-swift",
+    commandName: "swiftconnect-cli",
     abstract: "A Swift CLI for OpenConnect VPN",
+    discussion: """
+      This tool connects to VPN servers using the OpenConnect protocol.
+      It supports multiple VPN protocols including Cisco AnyConnect, GlobalProtect,
+      Pulse Secure, and others.
+
+      Note: This application requires elevated privileges (root/Administrator)
+      to create network interfaces and modify routing tables.
+      """,
     version: "1.0.0"
   )
 
@@ -32,28 +64,44 @@ struct Cli: ParsableCommand {
   @Argument(help: "Username for authentication (optional, will prompt if not provided)")
   var username: String?
 
-  @Option(name: .long, help: "VPN protocol (anyconnect, gp, pulse, etc.)")
+  @Option(name: .long, help: "VPN protocol (anyconnect, gp, pulse, nc, array)")
   var vpnProtocol: String = "anyconnect"
 
   @Flag(help: "Set OpenConnect verbosity level")
-  var verbosity: VerbosityLevel = .debug
+  var verbosity: VerbosityLevel = .info
 
   mutating func run() throws {
+    // Check for elevated privileges first
+    do {
+      try PrivilegeChecker.requireElevatedPrivileges()
+    } catch {
+      throw ExitCode.failure
+    }
+
     // Validate server URL
     guard let server else {
-      print("\nError: Server URL is required")
+      print("\n❌ Error: Server URL is required")
+      print("\nUsage: swiftconnect-cli <server-url> [username]\n")
+      print("Example: swiftconnect-cli https://vpn.example.com myuser")
       throw ExitCode.validationFailure
     }
 
     guard let serverURL = URL(string: server) else {
-      print("\nError: Invalid server URL")
+      print("\n❌ Error: Invalid server URL: '\(server)'")
+      print("\nThe server URL must be a valid URL, including the protocol.")
+      print("Example: https://vpn.example.com")
       throw ExitCode.validationFailure
     }
 
     // Parse VPN protocol
     guard let vpnProtocol = VpnProtocol(rawValue: vpnProtocol) else {
-      print("\nError: Invalid VPN protocol '\(vpnProtocol)'")
-      print("Supported protocols: anyconnect, gp, pulse, nc, array")
+      print("\n❌ Error: Invalid VPN protocol '\(vpnProtocol)'")
+      print("\nSupported protocols:")
+      print("  • anyconnect - Cisco AnyConnect")
+      print("  • gp         - GlobalProtect (Palo Alto)")
+      print("  • pulse      - Pulse Secure")
+      print("  • nc         - Juniper Network Connect")
+      print("  • array      - Array Networks")
       throw ExitCode.validationFailure
     }
 
@@ -74,8 +122,11 @@ struct Cli: ParsableCommand {
       username: username
     )
 
+    print("\n" + String(repeating: "=", count: 60))
+    print("SwiftConnect CLI - OpenConnect VPN Client")
+    print(String(repeating: "=", count: 60))
     print("\nConfiguration:")
-    print("  Server: \(serverURL)")
+    print("  Server:   \(serverURL)")
     print("  Username: \(username ?? "will prompt")")
     print("  Protocol: \(vpnProtocol.rawValue)")
     print("  Log Level: \(logLevel)")
@@ -84,40 +135,131 @@ struct Cli: ParsableCommand {
     // Create VPN session
     let session = VpnSession(configuration: config)
 
-    // Set up log handler (default is fine, but we could customize)
+    // Configure session handlers
+    configureSessionHandlers(session: session)
+
+    // Set up signal handlers for graceful shutdown
+    setupSignalHandlers(session: session)
+
+    print("Connecting to VPN...\n")
+
+    // Connect to VPN
+    do {
+      try session.connect()
+      print("\n✅ Connected successfully!")
+      print(String(repeating: "=", count: 60))
+      print()
+
+      // Display connection details
+      displayConnectionInfo(session: session)
+
+      // Keep the connection alive
+      print("Press Ctrl+C to disconnect...")
+      print()
+
+      // Request initial stats
+      session.requestStats()
+
+      // Start periodic stats updates
+      startPeriodicStats(session: session)
+
+      // Block on main dispatch queue (signal handlers will exit)
+      // Note: dispatchMain() never returns - program exits via signal handlers
+      dispatchMain()
+
+    } catch let error as VpnError {
+      print("\n" + String(repeating: "=", count: 60))
+      print("❌ Connection failed: \(error.localizedDescription)")
+      print(String(repeating: "=", count: 60))
+      print()
+      throw ExitCode.failure
+    } catch {
+      print("\n" + String(repeating: "=", count: 60))
+      print("❌ Unexpected error: \(error)")
+      print(String(repeating: "=", count: 60))
+      print()
+      throw ExitCode.failure
+    }
+  }
+
+  // MARK: - Session Configuration
+
+  private func configureSessionHandlers(session: VpnSession) {
+    // Log handler - format log messages nicely
     session.onLog = { message, level in
+      let timestamp = DateFormatter.localizedString(
+        from: Date(),
+        dateStyle: .none,
+        timeStyle: .medium
+      )
+
       let prefix: String
+      let emoji: String
+
       switch level {
-      case .error: prefix = "ERROR"
-      case .info: prefix = "INFO"
-      case .debug: prefix = "DEBUG"
-      case .trace: prefix = "TRACE"
+      case .error:
+        prefix = "ERROR"
+        emoji = "❌"
+      case .info:
+        prefix = "INFO"
+        emoji = "ℹ️"
+      case .debug:
+        prefix = "DEBUG"
+        emoji = "🔍"
+      case .trace:
+        prefix = "TRACE"
+        emoji = "🔬"
       }
-      print("\(prefix): \(message)")
+
+      // Only show emoji for important messages when not in debug/trace
+      let shouldShowEmoji = level == .error || level == .info
+      let emojiPrefix = shouldShowEmoji ? "\(emoji) " : ""
+
+      print("\(emojiPrefix)[\(timestamp)] \(prefix): \(message)")
     }
 
-    // Set up certificate validation handler
+    // Certificate validation handler
     session.onCertificateValidation = { certInfo in
-      print("\n⚠️  Certificate Validation:")
-      print("   Reason: \(certInfo.reason)")
+      print("\n" + String(repeating: "=", count: 60))
+      print("⚠️  Certificate Validation Required")
+      print(String(repeating: "=", count: 60))
+      print("\nReason: \(certInfo.reason)")
       if let hostname = certInfo.hostname {
-        print("   Hostname: \(hostname)")
+        print("Hostname: \(hostname)")
       }
+      print("\n" + String(repeating: "-", count: 60))
+      print("⚠️  WARNING: This server's certificate cannot be validated!")
+      print(String(repeating: "-", count: 60))
+      print(
+        """
+        \nThere is no guarantee that the server is the computer you think it is.
 
-      // For CLI, we'll accept certificates (in production, should prompt user)
-      print("   Action: Accepting certificate")
-      return true
+        This could be a legitimate certificate issue, or you could be under
+        attack (man-in-the-middle).
+
+        Do you want to accept this certificate? [y/N]:
+        """, terminator: " ")
+
+      if let response = readLine()?.lowercased(), response == "y" || response == "yes" {
+        print("\n✅ Certificate accepted")
+        return true
+      } else {
+        print("\n❌ Certificate rejected")
+        return false
+      }
     }
 
-    // Set up authentication handler
+    // Authentication handler - use secure input for passwords
     session.onAuthenticationRequired = { form in
-      print("\n🔐 Authentication Required:")
+      print("\n" + String(repeating: "=", count: 60))
+      print("🔐 Authentication Required")
+      print(String(repeating: "=", count: 60))
 
       if let title = form.title {
-        print("   \(title)")
+        print("\n\(title)")
       }
       if let message = form.message {
-        print("   \(message)")
+        print("\(message)")
       }
       print()
 
@@ -125,130 +267,135 @@ struct Cli: ParsableCommand {
 
       // Fill in form fields by prompting user
       for (index, field) in filledForm.fields.enumerated() {
-        let prompt: String
         switch field.type {
         case .password:
-          prompt = "\(field.label) "
+          // Use secure input for password fields
+          print("\(field.label) (input hidden)")
+          if let password = SecureInput.read(prompt: "> ") {
+            filledForm.fields[index].value = password
+          } else {
+            print("⚠️  Warning: Empty password entered")
+            filledForm.fields[index].value = ""
+          }
+
         case .text:
-          prompt = "\(field.label) "
+          print("\(field.label)")
+          print("> ", terminator: "")
+          if let input = readLine() {
+            filledForm.fields[index].value = input
+          }
+
         case .hidden:
           // Skip hidden fields
           continue
+
         case .select(let options):
-          print("\(field.label)")
+          print("\n\(field.label)")
           for (idx, option) in options.enumerated() {
             print("  \(idx + 1). \(option)")
           }
-          prompt = "Select (1-\(options.count)): "
-        }
-
-        print(prompt, terminator: "")
-
-        if let input = readLine() {
-          filledForm.fields[index].value = input
+          print("> ", terminator: "")
+          if let input = readLine(), let selection = Int(input),
+            selection > 0 && selection <= options.count
+          {
+            filledForm.fields[index].value = options[selection - 1]
+          }
         }
       }
 
+      print()
       return filledForm
     }
 
-    // Set up reconnection handler
+    // Reconnection handler
     session.onReconnected = {
-      print("\n🔄 VPN connection reconnected!")
+      print("\n" + String(repeating: "=", count: 60))
+      print("🔄 VPN connection reconnected successfully!")
+      print(String(repeating: "=", count: 60))
+      print()
     }
 
-    // Set up stats handler
+    // Statistics handler
     session.onStats = { stats in
-      print("\n📊 VPN Statistics:")
-      print("   TX: \(stats.formattedTxBytes) (\(stats.txPackets) packets)")
-      print("   RX: \(stats.formattedRxBytes) (\(stats.rxPackets) packets)")
-      print("   Total: \(stats.formattedTotalBytes)")
+      let timestamp = DateFormatter.localizedString(
+        from: Date(),
+        dateStyle: .none,
+        timeStyle: .medium
+      )
+
+      print("[\(timestamp)] 📊 Statistics:")
+      print("  ↑ TX: \(stats.formattedTxBytes) (\(stats.txPackets) packets)")
+      print("  ↓ RX: \(stats.formattedRxBytes) (\(stats.rxPackets) packets)")
+      print("  ∑ Total: \(stats.formattedTotalBytes)")
     }
 
-    // Set up disconnect handler
+    // Disconnect handler
     session.onDisconnect = { reason in
+      print("\n" + String(repeating: "=", count: 60))
       if let reason = reason {
-        print("\n❌ Disconnected due to error: \(reason)")
+        print("❌ Disconnected: \(reason)")
       } else {
-        print("\n✅ Disconnected")
+        print("✅ Disconnected")
       }
+      print(String(repeating: "=", count: 60))
+      print()
+
+      // Exit the program after disconnect
+      Foundation.exit(0)
     }
+  }
 
-    print("Connecting to VPN...")
+  // MARK: - Connection Monitoring
 
-    // Set up signal handler for graceful shutdown
-    signal(SIGINT) { _ in
-      shouldExitGlobal = true
+  private func displayConnectionInfo(session: VpnSession) {
+    if let ifname = session.interfaceName {
+      print("Network Interface: \(ifname)")
     }
+    print("Mainloop Status: \(session.isMainloopRunning ? "Running ✓" : "Stopped")")
+    print()
+  }
 
-    // Connect to VPN
-    do {
-      try session.connect()
-      print("\n✅ Connected successfully!")
-      print("VPN connection established.")
-
-      // Display connection details
-      if let ifname = session.interfaceName {
-        print("Interface: \(ifname)")
-      }
-      print("Mainloop running: \(session.isMainloopRunning)")
-
-      // Keep the connection alive
-      print("\nPress Ctrl+C to disconnect...")
-      print("Stats will be displayed every 10 seconds...")
-
-      // Request initial stats
+  private func startPeriodicStats(session: VpnSession) {
+    // Request stats every 10 seconds on a background queue
+    let timer = DispatchSource.makeTimerSource(queue: .global())
+    timer.schedule(deadline: .now(), repeating: .seconds(10))
+    timer.setEventHandler {
       session.requestStats()
-
-      var loopCount = 0
-      // Monitor mainloop status and check for exit signal
-      while session.isMainloopRunning && !shouldExitGlobal {
-        Thread.sleep(forTimeInterval: 0.5)
-        loopCount += 1
-
-        // Request stats every 10 seconds (20 iterations of 0.5s)
-        if loopCount >= 20 {
-          session.requestStats()
-          loopCount = 0
-        }
-      }
-
-      if shouldExitGlobal {
-        print("\n🛑 Disconnecting...")
-        session.disconnect()
-      } else {
-        print("\n⚠️  Mainloop has stopped")
-      }
-
-    } catch let error as VpnError {
-      print("\n❌ Connection failed: \(error.localizedDescription)")
-      throw ExitCode.failure
-    } catch {
-      print("\n❌ Unexpected error: \(error)")
-      throw ExitCode.failure
     }
-  }
-}
-
-// Keep VerbosityLevel for CLI flags
-enum VerbosityLevel: String, EnumerableFlag {
-  case info
-  case debug
-  case trace
-
-  static func name(for value: VerbosityLevel) -> NameSpecification {
-    switch value {
-    case .info: return .customLong("oc-info")
-    case .debug: return .customLong("oc-debug")
-    case .trace: return .customLong("oc-trace")
-    }
+    timer.resume()
   }
 
-  static func help(for value: VerbosityLevel) -> ArgumentHelp? {
-    switch value {
-    case .info: return "OpenConnect INFO level"
-    case .debug: return "OpenConnect DEBUG level (default)"
-    case .trace: return "OpenConnect TRACE level"
+  private func setupSignalHandlers(session: VpnSession) {
+    // Ignore default signal handlers
+    signal(SIGINT, SIG_IGN)
+    signal(SIGTERM, SIG_IGN)
+
+    // Handle SIGINT (Ctrl+C)
+    let sigintSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+    sigintSource.setEventHandler {
+      print("\n" + String(repeating: "=", count: 60))
+      print("🛑 Received interrupt signal, disconnecting...")
+      session.disconnect()
+      print("✅ Disconnected successfully")
+      print(String(repeating: "=", count: 60))
+      print()
+      Foundation.exit(0)
     }
+    sigintSource.resume()
+    Cli.signalSources.append(sigintSource)
+
+    // Handle SIGTERM
+    let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+    sigtermSource.setEventHandler {
+      print("\n" + String(repeating: "=", count: 60))
+      print("🛑 Received termination signal, disconnecting...")
+      session.disconnect()
+      print("✅ Disconnected successfully")
+      print(String(repeating: "=", count: 60))
+      print()
+      Foundation.exit(0)
+    }
+    sigtermSource.resume()
+    Cli.signalSources.append(sigtermSource)
   }
 }

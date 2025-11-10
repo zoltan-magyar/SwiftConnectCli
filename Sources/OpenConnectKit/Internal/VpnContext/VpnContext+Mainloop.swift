@@ -76,14 +76,19 @@ extension VpnContext {
 
   /// The actual mainloop execution that runs on the background thread.
   ///
-  /// This method calls `openconnect_mainloop()` which blocks until the connection
-  /// ends. The mainloop handles all VPN traffic and will automatically attempt
-  /// to reconnect if the connection drops.
+  /// This method runs `openconnect_mainloop()` in a continuous loop, which is the
+  /// correct way to use the OpenConnect library. Each call to `openconnect_mainloop()`
+  /// returns when it needs to process commands or reconnect. The loop continues
+  /// until an error occurs or a cancel command is received.
+  ///
+  /// The mainloop handles all VPN traffic and will automatically attempt
+  /// to reconnect if the connection drops (up to reconnect_timeout).
   ///
   /// When the mainloop exits:
   /// - Sets `isMainloopRunning` to false
   /// - Logs the exit code
   /// - Cleans up thread state
+  /// - Notifies the session of disconnection (if not intentional)
   private func runMainloopThread() {
     guard let vpnInfo = self.vpnInfo else {
       mainloopLock.lock()
@@ -92,12 +97,32 @@ extension VpnContext {
       return
     }
 
-    // Call the OpenConnect mainloop with reconnection parameters
-    _ = openconnect_mainloop(
-      vpnInfo,
-      configuration.reconnectTimeout,
-      configuration.reconnectInterval
-    )
+    while true {
+      // Call the OpenConnect mainloop with reconnection parameters
+      // This call will block until:
+      // - A command is received via cmd_fd
+      // - The connection drops and reconnection is attempted
+      // - An error occurs
+      let ret = openconnect_mainloop(
+        vpnInfo,
+        configuration.reconnectTimeout,
+        configuration.reconnectInterval
+      )
+
+      // Check if mainloop exited due to an error or cancel command
+      if ret != 0 {
+        // Non-zero return means the mainloop has stopped
+        // This could be due to:
+        // - OC_CMD_CANCEL command (user-initiated disconnect)
+        // - Connection failure that couldn't be recovered
+        // - Other errors
+        break
+      }
+
+      // If ret == 0, the mainloop exited normally (usually after a successful
+      // reconnect or command processing). Continue the loop to keep the
+      // connection alive.
+    }
 
     // Mainloop has exited
     mainloopLock.lock()
