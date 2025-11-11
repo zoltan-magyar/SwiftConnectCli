@@ -52,6 +52,9 @@ public enum VpnError: Error {
 
   /// Failed to find or execute vpnc-script.
   case vpncScriptFailed
+
+  /// VPN is already connected.
+  case alreadyConnected
 }
 
 // MARK: - LocalizedError
@@ -84,6 +87,8 @@ extension VpnError: LocalizedError {
       return "Failed to setup TUN device for VPN tunnel"
     case .vpncScriptFailed:
       return "Failed to find or execute vpnc-script"
+    case .alreadyConnected:
+      return "VPN is already connected"
     }
   }
 }

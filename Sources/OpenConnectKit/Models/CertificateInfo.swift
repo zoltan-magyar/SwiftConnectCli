@@ -52,17 +52,4 @@ public struct CertificateInfo: Sendable {
     self.hostname = hostname
     self.rawData = rawData
   }
-
-  /// Creates certificate information from a C string pointer.
-  ///
-  /// - Parameter cReason: C string pointer to the failure reason
-  internal init(from cReason: UnsafePointer<CChar>?) {
-    if let cReason = cReason {
-      self.reason = String(cString: cReason)
-    } else {
-      self.reason = "Unknown certificate validation error"
-    }
-    self.hostname = nil
-    self.rawData = nil
-  }
 }

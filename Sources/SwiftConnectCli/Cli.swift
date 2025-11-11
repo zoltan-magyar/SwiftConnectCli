@@ -123,12 +123,12 @@ struct Cli: ParsableCommand {
     // Connect to VPN
     do {
       try session.connect()
-      print("\n✅ Connected successfully!")
+      print("\n✅ Connection initiated successfully!")
       print(String(repeating: "=", count: 60))
       print()
 
-      // Display connection details
-      displayConnectionInfo(session: session)
+      // Note: Interface name will be displayed when status changes to .connected
+      // after TUN device setup completes (see onStatusChanged callback)
 
       // Keep the connection alive
       print("Press Ctrl+C to disconnect...")
@@ -169,17 +169,33 @@ struct Cli: ParsableCommand {
 
       switch status {
       case .disconnected(let error):
+        print("\n" + String(repeating: "=", count: 60))
         if let error = error {
+          print("❌ Disconnected: \(error.localizedDescription)")
           print("[\(timestamp)] ❌ Status: Disconnected - \(error.localizedDescription)")
         } else {
+          print("✅ Disconnected")
           print("[\(timestamp)] ℹ️  Status: Disconnected")
         }
+        print(String(repeating: "=", count: 60))
+        print()
+
+        // Exit the program after disconnect
+        Foundation.exit(0)
       case .connecting(let stage):
         print("[\(timestamp)] 🔄 Status: \(stage)")
       case .connected:
         print("[\(timestamp)] ✅ Status: Connected!")
+        // Display interface name now that TUN setup is complete
+        if let ifname = session.interfaceName {
+          print("[\(timestamp)] 🌐 Network Interface: \(ifname)")
+        }
       case .reconnecting:
-        print("[\(timestamp)] 🔄 Status: Reconnecting after connection loss...")
+        print("\n" + String(repeating: "=", count: 60))
+        print("🔄 VPN connection reconnecting after connection loss...")
+        print(String(repeating: "=", count: 60))
+        print()
+        print("[\(timestamp)] 🔄 Status: Reconnecting...")
       }
     }
 
@@ -286,14 +302,6 @@ struct Cli: ParsableCommand {
       return filledForm
     }
 
-    // Reconnection handler
-    session.onReconnected = {
-      print("\n" + String(repeating: "=", count: 60))
-      print("🔄 VPN connection reconnected successfully!")
-      print(String(repeating: "=", count: 60))
-      print()
-    }
-
     // Statistics handler
     session.onStats = { stats in
       let timestamp = DateFormatter.localizedString(
@@ -308,32 +316,9 @@ struct Cli: ParsableCommand {
       print("  ∑ Total: \(stats.formattedTotalBytes)")
     }
 
-    // Disconnect handler
-    session.onDisconnect = { reason in
-      print("\n" + String(repeating: "=", count: 60))
-      if let reason = reason {
-        print("❌ Disconnected: \(reason)")
-      } else {
-        print("✅ Disconnected")
-      }
-      print(String(repeating: "=", count: 60))
-      print()
-
-      // Exit the program after disconnect
-      Foundation.exit(0)
-    }
   }
 
   // MARK: - Connection Monitoring
-
-  private func displayConnectionInfo(session: VpnSession) {
-    if let ifname = session.interfaceName {
-      print("Network Interface: \(ifname)")
-    }
-    print(
-      "Connection Status: \(session.connectionStatus.isConnected ? "Connected ✓" : "Disconnected")")
-    print()
-  }
 
   private func startPeriodicStats(session: VpnSession) {
     // Request stats every 10 seconds on a background queue

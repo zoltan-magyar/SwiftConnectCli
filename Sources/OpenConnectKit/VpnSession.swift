@@ -13,6 +13,9 @@ import Foundation
 /// OpenConnect VPN connections. All C interop is handled internally, exposing
 /// a clean, type-safe interface.
 ///
+/// **Thread Safety**: All methods are thread-safe. Callbacks may be invoked on
+/// background threads - use `DispatchQueue.main.async` when updating UI.
+///
 /// ## Example Usage
 ///
 /// ```swift
@@ -45,7 +48,7 @@ import Foundation
 ///
 /// try session.connect()
 /// ```
-public class VpnSession {
+public class VpnSession: @unchecked Sendable {
   // MARK: - Public Properties
 
   /// The configuration for this VPN session.
@@ -68,6 +71,24 @@ public class VpnSession {
   /// This property returns the interface name (e.g., "tun0", "utun0") after
   /// the TUN device has been successfully set up. Returns `nil` before connection
   /// or if the TUN device hasn't been configured yet.
+  ///
+  /// **Important**: The interface name becomes available only when the connection
+  /// status changes to `.connected`. During the `connect()` call, the TUN device
+  /// setup happens asynchronously in a background thread. To access the interface
+  /// name reliably, wait for the `onStatusChanged` callback to report `.connected`
+  /// status.
+  ///
+  /// ## Example Usage
+  ///
+  /// ```swift
+  /// session.onStatusChanged = { status in
+  ///     if case .connected = status {
+  ///         if let ifname = session.interfaceName {
+  ///             print("Interface: \(ifname)")
+  ///         }
+  ///     }
+  /// }
+  /// ```
   public var interfaceName: String? {
     return context?.assignedInterfaceName
   }
@@ -136,15 +157,6 @@ public class VpnSession {
   ///   - level: The log level
   public var onLog: ((String, LogLevel) -> Void)?
 
-  /// Called when the VPN connection is automatically reconnected.
-  ///
-  /// This callback is triggered when OpenConnect successfully reconnects
-  /// after a connection loss (e.g., network interruption, server restart).
-  /// It will not be called on the initial connection, only on reconnections.
-  ///
-  /// If not set, reconnection events are silently ignored.
-  public var onReconnected: (() -> Void)?
-
   /// Called when traffic statistics are received.
   ///
   /// This callback is triggered when statistics are requested via `requestStats()`
@@ -158,23 +170,6 @@ public class VpnSession {
   ///
   /// - Parameter stats: Current VPN traffic statistics
   public var onStats: ((VpnStats) -> Void)?
-
-  /// Called when the VPN connection is disconnected.
-  ///
-  /// This callback is triggered when the mainloop exits, either due to:
-  /// - User calling `disconnect()`
-  /// - Connection failure
-  /// - Network interruption
-  /// - Server disconnecting
-  ///
-  /// The optional `reason` parameter contains error details if the disconnect
-  /// was due to a failure (e.g., TUN device setup error). It will be `nil`
-  /// for normal disconnections.
-  ///
-  /// If not set, disconnection events are silently ignored.
-  ///
-  /// - Parameter reason: Optional error message describing why the disconnect occurred
-  public var onDisconnect: ((String?) -> Void)?
 
   // MARK: - Internal Properties
 
@@ -206,12 +201,13 @@ public class VpnSession {
   ///
   /// - Throws: `VpnError` if connection fails at any step
   public func connect() throws {
-    guard connectionStatus.isDisconnected else {
+    guard case .disconnected = connectionStatus else {
+      throw VpnError.alreadyConnected
       return
     }
 
     if context == nil {
-      context = try VpnContext(session: self, configuration: configuration)
+      context = try VpnContext(session: self)
     }
 
     try context?.connect()
@@ -219,22 +215,20 @@ public class VpnSession {
 
   /// Disconnects from the VPN server.
   public func disconnect() {
-    guard !connectionStatus.isDisconnected else {
+    // Only proceed if NOT already disconnected
+    if case .disconnected = connectionStatus {
       return
     }
 
     context?.disconnect()
     context = nil
-
-    // Notify that we disconnected intentionally (no error)
-    onDisconnect?(nil)
   }
 
   /// Requests traffic statistics from the VPN connection.
   ///
   /// This method sends a command to the mainloop to gather and report
   /// current traffic statistics. The statistics will be delivered via
-  /// the `onStats` callback (configured in Step 6).
+  /// the `onStats` callback.
   ///
   /// Statistics include:
   /// - Bytes sent/received
@@ -243,7 +237,7 @@ public class VpnSession {
   /// - Returns: `true` if the request was sent successfully, `false` otherwise
   @discardableResult
   public func requestStats() -> Bool {
-    guard connectionStatus.isConnected else {
+    guard case .connected = connectionStatus else {
       return false
     }
 
@@ -287,14 +281,6 @@ public class VpnSession {
     return handler(form)
   }
 
-  /// Handles reconnection notification from OpenConnect.
-  ///
-  /// This is called by the internal context when OpenConnect successfully
-  /// reconnects after a connection loss.
-  internal func handleReconnected() {
-    onReconnected?()
-  }
-
   /// Handles statistics notification from OpenConnect.
   ///
   /// This is called by the internal context when statistics are received
@@ -303,15 +289,6 @@ public class VpnSession {
   /// - Parameter stats: The VPN traffic statistics
   internal func handleStats(_ stats: VpnStats) {
     onStats?(stats)
-  }
-
-  /// Handles disconnection notification from OpenConnect.
-  ///
-  /// This is called by the internal context when the mainloop exits.
-  ///
-  /// - Parameter reason: Optional error message if disconnect was due to failure
-  internal func handleDisconnect(reason: String?) {
-    onDisconnect?(reason)
   }
 
   /// Handles connection status changes from OpenConnect.

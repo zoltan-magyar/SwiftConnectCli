@@ -12,86 +12,39 @@ import Foundation
   import WinSDK
 #endif
 
-/// Internal context managing the OpenConnect VPN connection.
-///
-/// This class handles all C interop with the OpenConnect library and is owned by `VpnSession`.
-/// It translates between Swift types and C types, managing the lifecycle of the underlying
-/// OpenConnect `vpninfo` structure.
-///
-/// The class is organized into extensions by functionality:
-/// - `VpnContext+Connection.swift` - Connection and disconnection logic
-/// - `VpnContext+TunDevice.swift` - TUN device setup and management
-/// - `VpnContext+Mainloop.swift` - Mainloop thread management
-/// - `VpnContext+Commands.swift` - Command sending via cmd_fd
-/// - `VpnContext+Callbacks.swift` - Callback handling from OpenConnect
-internal class VpnContext {
+// Internal context managing OpenConnect C API
+internal class VpnContext: @unchecked Sendable {
   // MARK: - Properties
 
   internal var connectionStatus: ConnectionStatus = .disconnected(error: nil)
   internal let stateLock = NSLock()
-
   internal var status: ConnectionStatus {
     stateLock.lock()
     defer { stateLock.unlock() }
     return connectionStatus
   }
 
-  /// OpenConnect vpninfo pointer.
-  internal var vpnInfo: OpaquePointer?
+  internal var vpnInfo: OpaquePointer!
+  internal unowned let session: VpnSession
 
-  /// Reference to the owning VpnSession.
-  internal weak var session: VpnSession?
-
-  /// Configuration for this context.
-  internal let configuration: VpnConfiguration
-
-  /// Command file descriptor for controlling the mainloop.
-  ///
-  /// This pipe is used to send commands to the OpenConnect mainloop, such as:
-  /// - `OC_CMD_CANCEL` - Close connections, log off, and shut down
-  /// - `OC_CMD_PAUSE` - Pause the connection temporarily
-  /// - `OC_CMD_DETACH` - Detach from the connection
-  /// - `OC_CMD_STATS` - Request traffic statistics
-  ///
-  /// The pipe is created by `openconnect_setup_cmd_pipe()` and is owned by the
-  /// vpninfo structure. It will be automatically closed when `openconnect_vpninfo_free()`
-  /// is called.
-  ///
-  /// Platform-specific types:
-  /// - **Windows**: `SOCKET` (from WinSDK)
-  /// - **Unix/Linux/macOS**: `Int32` file descriptor
+  // Command pipe for controlling mainloop (OC_CMD_*)
   #if os(Windows)
-    internal var cmdFd: SOCKET?
+    internal var cmdFd: SOCKET!
   #else
-    internal var cmdFd: Int32?
+    internal var cmdFd: Int32!
   #endif
 
-  /// Thread running the OpenConnect mainloop.
-  ///
-  /// The mainloop runs in a background thread to avoid blocking the main thread.
-  /// It continuously processes VPN traffic, handles reconnections, and monitors
-  /// the cmd_fd for control commands.
   internal var mainloopThread: Thread?
-
-  /// Last error that occurred during TUN device setup or other operations.
-  ///
-  /// This matches the pattern used by OpenConnect GUI, where errors in the
-  /// setup_tun callback are stored here since the callback returns void.
   internal var lastError: VpnError?
 
-  // MARK: - Command Constants
+  // MARK: - Command Types
 
-  /// Command byte to cancel the connection and log off.
-  internal static let OC_CMD_CANCEL: UInt8 = 0x78  // 'x'
-
-  /// Command byte to pause the connection.
-  internal static let OC_CMD_PAUSE: UInt8 = 0x70  // 'p'
-
-  /// Command byte to detach from the connection.
-  internal static let OC_CMD_DETACH: UInt8 = 0x64  // 'd'
-
-  /// Command byte to request statistics.
-  internal static let OC_CMD_STATS: UInt8 = 0x73  // 's'
+  internal enum Command: UInt8 {
+    case cancel = 0x78  // 'x'
+    case pause = 0x70  // 'p'
+    case detach = 0x64  // 'd'
+    case stats = 0x73  // 's'
+  }
 
   // MARK: - Initialization
 
@@ -100,34 +53,33 @@ internal class VpnContext {
   /// This initializes the OpenConnect library, parses the server URL, sets up
   /// the command pipe for mainloop control, and registers callback handlers.
   ///
-  /// - Parameters:
-  ///   - session: The VpnSession that owns this context
-  ///   - configuration: The VPN configuration
+  /// - Parameter session: The VpnSession that owns this context
   /// - Throws: `VpnError` if initialization fails
-  init(session: VpnSession, configuration: VpnConfiguration) throws {
+  init(session: VpnSession) throws {
     self.session = session
-    self.configuration = configuration
 
     // Create OpenConnect vpninfo structure with callbacks
     // Pass VpnContext (self) as privdata since it manages the OpenConnect resources
-    self.vpnInfo = openconnect_vpninfo_new(
-      "AnyConnect Compatible OpenConnectKit Client",
-      validatePeerCertCallback,
-      nil,
-      processAuthFormCallback,
-      get_progress_shim_callback(),
-      Unmanaged.passUnretained(self).toOpaque()
-    )
-
-    guard let vpnInfo = self.vpnInfo else {
+    guard
+      let vpnInfo = openconnect_vpninfo_new(
+        "AnyConnect Compatible OpenConnectKit Client",
+        validatePeerCertCallback,
+        nil,
+        processAuthFormCallback,
+        get_progress_shim_callback(),
+        Unmanaged.passUnretained(self).toOpaque()
+      )
+    else {
       throw VpnError.notInitialized
     }
 
+    self.vpnInfo = vpnInfo
+
     // Configure log level
-    openconnect_set_loglevel(vpnInfo, configuration.logLevel.openConnectLevel)
+    openconnect_set_loglevel(vpnInfo, session.configuration.logLevel.openConnectLevel)
 
     // Parse and validate server URL
-    let ret = openconnect_parse_url(vpnInfo, configuration.serverURL.absoluteString)
+    let ret = openconnect_parse_url(vpnInfo, session.configuration.serverURL.absoluteString)
     if ret != 0 {
       throw VpnError.invalidConfiguration(reason: "Failed to parse server URL")
     }
@@ -153,26 +105,12 @@ internal class VpnContext {
 
   deinit {
     disconnect()
-
-    if let vpnInfo = self.vpnInfo {
-      openconnect_vpninfo_free(vpnInfo)
-      self.vpnInfo = nil
-    }
-
-    // Note: cmdFd is owned by vpninfo and will be closed by openconnect_vpninfo_free()
-    cmdFd = nil
+    openconnect_vpninfo_free(vpnInfo)
   }
 
   // MARK: - Public Computed Properties
 
-  /// Checks if the command pipe has been successfully set up.
-  ///
-  /// - Returns: `true` if the command pipe is ready to send commands, `false` otherwise
   internal var isCmdPipeReady: Bool {
-    guard let cmdFd = cmdFd else {
-      return false
-    }
-
     #if os(Windows)
       return cmdFd != INVALID_SOCKET
     #else
@@ -180,16 +118,7 @@ internal class VpnContext {
     #endif
   }
 
-  /// Gets the name of the TUN/TAP interface that was assigned.
-  ///
-  /// This is only available after the TUN device has been set up successfully.
-  ///
-  /// - Returns: The interface name (e.g., "tun0", "utun0"), or `nil` if not yet set up
   internal var assignedInterfaceName: String? {
-    guard let vpnInfo = self.vpnInfo else {
-      return nil
-    }
-
     guard let ifnamePtr = openconnect_get_ifname(vpnInfo) else {
       return nil
     }
