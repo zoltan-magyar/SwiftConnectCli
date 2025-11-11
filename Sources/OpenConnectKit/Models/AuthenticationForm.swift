@@ -232,12 +232,9 @@ extension AuthenticationForm {
       // to set form field values according to the OpenConnect documentation
       let result = openconnect_set_option_value(option, field.value)
 
-      // Log if setting the value failed (non-zero return value indicates error)
-      if result != 0 {
-        // We can't easily log here without access to the session context,
-        // but the function will still continue to set other fields
-        // The OpenConnect library will handle the error appropriately
-      }
+      // Assert that setting the value succeeded in debug builds
+      // This helps catch issues during development without runtime overhead in release
+      assert(result == 0, "Failed to set auth form value for field: \(field.label)")
 
       currentOption = option.pointee.next
       fieldIndex += 1

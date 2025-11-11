@@ -27,6 +27,15 @@ import Foundation
 internal class VpnContext {
   // MARK: - Properties
 
+  internal var connectionStatus: ConnectionStatus = .disconnected(error: nil)
+  internal let stateLock = NSLock()
+
+  internal var status: ConnectionStatus {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    return connectionStatus
+  }
+
   /// OpenConnect vpninfo pointer.
   internal var vpnInfo: OpaquePointer?
 
@@ -35,9 +44,6 @@ internal class VpnContext {
 
   /// Configuration for this context.
   internal let configuration: VpnConfiguration
-
-  /// Whether the VPN is currently connected.
-  internal var isConnected: Bool = false
 
   /// Command file descriptor for controlling the mainloop.
   ///
@@ -67,27 +73,11 @@ internal class VpnContext {
   /// the cmd_fd for control commands.
   internal var mainloopThread: Thread?
 
-  /// Flag indicating whether the mainloop is currently running.
-  ///
-  /// This is used to track the mainloop state and prevent multiple simultaneous
-  /// mainloop executions.
-  internal var isMainloopRunning: Bool = false
-
-  /// Lock for synchronizing access to mainloop state.
-  internal let mainloopLock = NSLock()
-
-  /// Last error that occurred during TUN device setup.
+  /// Last error that occurred during TUN device setup or other operations.
   ///
   /// This matches the pattern used by OpenConnect GUI, where errors in the
   /// setup_tun callback are stored here since the callback returns void.
-  internal var lastError: String?
-
-  /// Flag indicating whether disconnect was intentional (user-initiated).
-  ///
-  /// This is used to prevent calling the onDisconnect callback twice when
-  /// the user explicitly calls disconnect() - once in disconnect() and once
-  /// when the mainloop exits.
-  internal var intentionalDisconnect: Bool = false
+  internal var lastError: VpnError?
 
   // MARK: - Command Constants
 
@@ -205,17 +195,5 @@ internal class VpnContext {
     }
 
     return String(cString: ifnamePtr)
-  }
-
-  /// Indicates whether the mainloop is currently running.
-  ///
-  /// The mainloop runs on a background thread and handles VPN traffic routing.
-  /// This property is thread-safe.
-  ///
-  /// - Returns: `true` if the mainloop is running, `false` otherwise
-  internal var mainloopRunning: Bool {
-    mainloopLock.lock()
-    defer { mainloopLock.unlock() }
-    return isMainloopRunning
   }
 }

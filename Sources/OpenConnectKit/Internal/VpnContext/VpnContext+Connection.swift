@@ -22,29 +22,38 @@ extension VpnContext {
   ///
   /// - Throws: `VpnError` if any connection step fails
   func connect() throws {
-    guard let vpnInfo = self.vpnInfo else {
-      throw VpnError.notInitialized
-    }
-
-    guard !isConnected else {
+    stateLock.lock()
+    guard connectionStatus.isDisconnected else {
+      stateLock.unlock()
       return
     }
+    connectionStatus = .connecting(stage: "Initializing connection")
+    stateLock.unlock()
+
+    // Notify session of status change
+    session?.handleStatusChange(status: .connecting(stage: "Initializing connection"))
 
     // Step 1: Obtain authentication cookie
+    updateStatus(.connecting(stage: "Authenticating..."))
     var ret = openconnect_obtain_cookie(vpnInfo)
     if ret != 0 {
+      updateStatus(.disconnected(error: .cookieObtainFailed))
       throw VpnError.cookieObtainFailed
     }
 
     // Step 2: Establish CSTP connection
+    updateStatus(.connecting(stage: "Establishing CSTP connection"))
     ret = openconnect_make_cstp_connection(vpnInfo)
     if ret != 0 {
+      updateStatus(.disconnected(error: .cstpConnectionFailed))
       throw VpnError.cstpConnectionFailed
     }
 
     // Step 3: Setup DTLS for secure data channel
+    updateStatus(.connecting(stage: "Setting up DTLS"))
     ret = openconnect_setup_dtls(vpnInfo, 60)
     if ret != 0 {
+      updateStatus(.disconnected(error: .dtlsSetupFailed))
       throw VpnError.dtlsSetupFailed
     }
 
@@ -53,11 +62,10 @@ extension VpnContext {
     // we registered in initialization (setupTunCallback). OpenConnect will call
     // this callback at the appropriate time, after authentication and after
     // receiving network configuration from the server.
+    updateStatus(.connecting(stage: "Configuring tunnel"))
 
     // Step 5: Start the mainloop to handle VPN traffic
     startMainloop()
-
-    isConnected = true
   }
 
   /// Disconnects from the VPN server.
@@ -73,16 +81,26 @@ extension VpnContext {
   /// - Clean up the TUN device
   /// - Log off from the server
   func disconnect() {
-    guard isConnected else {
+    stateLock.lock()
+    guard !connectionStatus.isDisconnected else {
+      stateLock.unlock()
       return
     }
+    stateLock.unlock()
 
-    // Mark this as intentional so we don't report it as an error
-    intentionalDisconnect = true
-
-    // Stop the mainloop if it's running
     stopMainloop()
 
-    isConnected = false
+    updateStatus(.disconnected(error: nil))
+  }
+
+  /// Updates the connection status in a thread-safe manner and notifies the session.
+  ///
+  /// - Parameter status: The new connection status
+  internal func updateStatus(_ status: ConnectionStatus) {
+    stateLock.lock()
+    connectionStatus = status
+    stateLock.unlock()
+
+    session?.handleStatusChange(status: status)
   }
 }

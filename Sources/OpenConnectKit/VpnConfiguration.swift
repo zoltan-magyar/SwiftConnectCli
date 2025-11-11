@@ -18,8 +18,7 @@ import Foundation
 /// let config = VpnConfiguration(
 ///     serverURL: URL(string: "https://vpn.example.com")!,
 ///     vpnProtocol: .anyConnect,
-///     logLevel: .info,
-///     username: "user@example.com"
+///     logLevel: .info
 /// )
 /// ```
 public struct VpnConfiguration: Sendable {
@@ -39,14 +38,6 @@ public struct VpnConfiguration: Sendable {
   /// Default is `false` (reject invalid certificates).
   /// Set to `true` only for testing or when you trust the server.
   public var allowInsecureCertificates: Bool
-
-  /// Optional username for authentication.
-  public var username: String?
-
-  /// Optional password for authentication.
-  ///
-  /// - Note: The password will be cleared from memory after use.
-  public var password: String?
 
   // MARK: - TUN Device Configuration
 
@@ -104,8 +95,6 @@ public struct VpnConfiguration: Sendable {
   ///   - vpnProtocol: The VPN protocol (default: `.anyConnect`)
   ///   - logLevel: The log level (default: `.info`)
   ///   - allowInsecureCertificates: Whether to allow invalid certificates (default: `false`)
-  ///   - username: Optional username
-  ///   - password: Optional password
   ///   - vpncScript: Path to vpnc-script (default: `nil` for auto-detect)
   ///   - interfaceName: Network interface name (default: `nil` for auto-assign)
   ///   - reconnectTimeout: Timeout for reconnection attempts (default: `300` seconds)
@@ -115,8 +104,6 @@ public struct VpnConfiguration: Sendable {
     vpnProtocol: VpnProtocol = .anyConnect,
     logLevel: LogLevel = .info,
     allowInsecureCertificates: Bool = false,
-    username: String? = nil,
-    password: String? = nil,
     vpncScript: String? = nil,
     interfaceName: String? = nil,
     reconnectTimeout: Int32 = 300,
@@ -126,8 +113,6 @@ public struct VpnConfiguration: Sendable {
     self.vpnProtocol = vpnProtocol
     self.logLevel = logLevel
     self.allowInsecureCertificates = allowInsecureCertificates
-    self.username = username
-    self.password = password
     self.vpncScript = vpncScript
     self.interfaceName = interfaceName
     self.reconnectTimeout = reconnectTimeout

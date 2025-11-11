@@ -15,35 +15,13 @@ import OpenConnectKit
   import Glibc
 #endif
 
-// MARK: - Verbosity Level
-
-/// CLI flag for OpenConnect verbosity level.
-enum VerbosityLevel: String, EnumerableFlag {
-  case info
-  case debug
-  case trace
-
-  static func name(for value: VerbosityLevel) -> NameSpecification {
-    switch value {
-    case .info: return .customLong("oc-info")
-    case .debug: return .customLong("oc-debug")
-    case .trace: return .customLong("oc-trace")
-    }
-  }
-
-  static func help(for value: VerbosityLevel) -> ArgumentHelp? {
-    switch value {
-    case .info: return "OpenConnect INFO level (default)"
-    case .debug: return "OpenConnect DEBUG level"
-    case .trace: return "OpenConnect TRACE level"
-    }
-  }
-}
-
 @main
 struct Cli: ParsableCommand {
   // Signal sources for handling Ctrl+C and termination
   private static var signalSources: [DispatchSourceSignal] = []
+  // Timer for periodic stats updates
+  private static var statsTimer: DispatchSourceTimer?
+
   static let configuration = CommandConfiguration(
     commandName: "swiftconnect-cli",
     abstract: "A Swift CLI for OpenConnect VPN",
@@ -67,8 +45,8 @@ struct Cli: ParsableCommand {
   @Option(name: .long, help: "VPN protocol (anyconnect, gp, pulse, nc, array)")
   var vpnProtocol: String = "anyconnect"
 
-  @Flag(help: "Set OpenConnect verbosity level")
-  var verbosity: VerbosityLevel = .info
+  @Flag(name: .shortAndLong, help: "Increase verbosity (-v: info, -vv: debug, -vvv: trace)")
+  var verbose: Int
 
   mutating func run() throws {
     // Check for elevated privileges first
@@ -105,12 +83,13 @@ struct Cli: ParsableCommand {
       throw ExitCode.validationFailure
     }
 
-    // Convert CLI verbosity to LogLevel
+    // Convert CLI verbosity count to LogLevel
     let logLevel: LogLevel
-    switch verbosity {
-    case .info: logLevel = .info
-    case .debug: logLevel = .debug
-    case .trace: logLevel = .trace
+    switch verbose {
+    case 0: logLevel = .error  // No -v flag: errors only
+    case 1: logLevel = .info  // -v: info level
+    case 2: logLevel = .debug  // -vv: debug level
+    default: logLevel = .trace  // -vvv or more: trace level
     }
 
     // Create configuration
@@ -118,8 +97,7 @@ struct Cli: ParsableCommand {
       serverURL: serverURL,
       vpnProtocol: vpnProtocol,
       logLevel: logLevel,
-      allowInsecureCertificates: false,
-      username: username
+      allowInsecureCertificates: false
     )
 
     print("\n" + String(repeating: "=", count: 60))
@@ -127,7 +105,6 @@ struct Cli: ParsableCommand {
     print(String(repeating: "=", count: 60))
     print("\nConfiguration:")
     print("  Server:   \(serverURL)")
-    print("  Username: \(username ?? "will prompt")")
     print("  Protocol: \(vpnProtocol.rawValue)")
     print("  Log Level: \(logLevel)")
     print()
@@ -157,9 +134,6 @@ struct Cli: ParsableCommand {
       print("Press Ctrl+C to disconnect...")
       print()
 
-      // Request initial stats
-      session.requestStats()
-
       // Start periodic stats updates
       startPeriodicStats(session: session)
 
@@ -185,6 +159,30 @@ struct Cli: ParsableCommand {
   // MARK: - Session Configuration
 
   private func configureSessionHandlers(session: VpnSession) {
+    // Status change handler - show connection progress
+    session.onStatusChanged = { status in
+      let timestamp = DateFormatter.localizedString(
+        from: Date(),
+        dateStyle: .none,
+        timeStyle: .medium
+      )
+
+      switch status {
+      case .disconnected(let error):
+        if let error = error {
+          print("[\(timestamp)] ❌ Status: Disconnected - \(error.localizedDescription)")
+        } else {
+          print("[\(timestamp)] ℹ️  Status: Disconnected")
+        }
+      case .connecting(let stage):
+        print("[\(timestamp)] 🔄 Status: \(stage)")
+      case .connected:
+        print("[\(timestamp)] ✅ Status: Connected!")
+      case .reconnecting:
+        print("[\(timestamp)] 🔄 Status: Reconnecting after connection loss...")
+      }
+    }
+
     // Log handler - format log messages nicely
     session.onLog = { message, level in
       let timestamp = DateFormatter.localizedString(
@@ -194,28 +192,19 @@ struct Cli: ParsableCommand {
       )
 
       let prefix: String
-      let emoji: String
 
       switch level {
       case .error:
         prefix = "ERROR"
-        emoji = "❌"
       case .info:
         prefix = "INFO"
-        emoji = "ℹ️"
       case .debug:
         prefix = "DEBUG"
-        emoji = "🔍"
       case .trace:
         prefix = "TRACE"
-        emoji = "🔬"
       }
 
-      // Only show emoji for important messages when not in debug/trace
-      let shouldShowEmoji = level == .error || level == .info
-      let emojiPrefix = shouldShowEmoji ? "\(emoji) " : ""
-
-      print("\(emojiPrefix)[\(timestamp)] \(prefix): \(message)")
+      print("[\(timestamp)] \(prefix): \(message)")
     }
 
     // Certificate validation handler
@@ -227,18 +216,8 @@ struct Cli: ParsableCommand {
       if let hostname = certInfo.hostname {
         print("Hostname: \(hostname)")
       }
-      print("\n" + String(repeating: "-", count: 60))
-      print("⚠️  WARNING: This server's certificate cannot be validated!")
-      print(String(repeating: "-", count: 60))
-      print(
-        """
-        \nThere is no guarantee that the server is the computer you think it is.
 
-        This could be a legitimate certificate issue, or you could be under
-        attack (man-in-the-middle).
-
-        Do you want to accept this certificate? [y/N]:
-        """, terminator: " ")
+      print("Do you want to accept this certificate? [y/N]: ", terminator: " ")
 
       if let response = readLine()?.lowercased(), response == "y" || response == "yes" {
         print("\n✅ Certificate accepted")
@@ -270,7 +249,7 @@ struct Cli: ParsableCommand {
         switch field.type {
         case .password:
           // Use secure input for password fields
-          print("\(field.label) (input hidden)")
+          print("\(field.label)")
           if let password = SecureInput.read(prompt: "> ") {
             filledForm.fields[index].value = password
           } else {
@@ -351,7 +330,8 @@ struct Cli: ParsableCommand {
     if let ifname = session.interfaceName {
       print("Network Interface: \(ifname)")
     }
-    print("Mainloop Status: \(session.isMainloopRunning ? "Running ✓" : "Stopped")")
+    print(
+      "Connection Status: \(session.connectionStatus.isConnected ? "Connected ✓" : "Disconnected")")
     print()
   }
 
@@ -363,6 +343,8 @@ struct Cli: ParsableCommand {
       session.requestStats()
     }
     timer.resume()
+
+    Cli.statsTimer = timer
   }
 
   private func setupSignalHandlers(session: VpnSession) {

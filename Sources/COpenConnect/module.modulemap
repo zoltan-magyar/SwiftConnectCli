@@ -1,5 +1,4 @@
-module COpenConnect [system] {
-    header "/opt/homebrew/include/openconnect.h"
-    link "openconnect"
+module COpenConnect {
+    header "include/COpenConnect.h"
     export *
 }

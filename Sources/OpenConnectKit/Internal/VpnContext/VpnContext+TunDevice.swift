@@ -52,7 +52,7 @@ internal func setupTunCallback(privdata: UnsafeMutableRawPointer?) {
 
   // Find vpnc-script path
   guard let vpncScriptPath = try? context.findVpncScript() else {
-    context.lastError = "Failed to find vpnc-script"
+    context.lastError = .vpncScriptFailed
     return
   }
 
@@ -68,6 +68,6 @@ internal func setupTunCallback(privdata: UnsafeMutableRawPointer?) {
   // Setup TUN device
   let ret = openconnect_setup_tun_device(context.vpnInfo, vpncScriptPtr, interfaceNamePtr)
   if ret != 0 {
-    context.lastError = "TUN device setup failed with code: \(ret)"
+    context.lastError = .tunSetupFailed
   }
 }

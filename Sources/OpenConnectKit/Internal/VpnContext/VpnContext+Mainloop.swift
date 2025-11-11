@@ -25,23 +25,27 @@ extension VpnContext {
   /// - The remote server disconnects
   /// - An unrecoverable error occurs
   internal func startMainloop() {
-    mainloopLock.lock()
-    defer { mainloopLock.unlock() }
-
-    // Don't start if already running
-    guard !isMainloopRunning else {
-      return
-    }
-
-    isMainloopRunning = true
+    stateLock.lock()
 
     // Create and start the mainloop thread
     mainloopThread = Thread { [weak self] in
       guard let self = self else { return }
+
+      self.stateLock.lock()
+      let shouldConnect = self.connectionStatus.isConnecting
+      self.stateLock.unlock()
+
+      if shouldConnect {
+        // Use updateStatus for consistency
+        self.updateStatus(.connected)
+      }
+
       self.runMainloopThread()
     }
     mainloopThread?.name = "com.openconnect.mainloop"
     mainloopThread?.start()
+
+    stateLock.unlock()
   }
 
   /// Stops the mainloop by sending a cancel command.
@@ -54,20 +58,19 @@ extension VpnContext {
   /// mainloop doesn't stop within that time, it will continue anyway and
   /// clean up the thread reference.
   internal func stopMainloop() {
-    mainloopLock.lock()
-    let wasRunning = isMainloopRunning
-    mainloopLock.unlock()
-
-    guard wasRunning else {
+    stateLock.lock()
+    guard connectionStatus.isConnected else {
+      stateLock.unlock()
       return
     }
+    stateLock.unlock()
 
     // Send cancel command to stop the mainloop
     sendCommand(VpnContext.OC_CMD_CANCEL)
 
     // Wait for the mainloop thread to finish (with timeout)
     let deadline = Date().addingTimeInterval(5.0)
-    while isMainloopRunning && Date() < deadline {
+    while !connectionStatus.isDisconnected && Date() < deadline {
       Thread.sleep(forTimeInterval: 0.1)
     }
 
@@ -85,17 +88,12 @@ extension VpnContext {
   /// to reconnect if the connection drops (up to reconnect_timeout).
   ///
   /// When the mainloop exits:
-  /// - Sets `isMainloopRunning` to false
+  /// - Updates connection status to disconnected
   /// - Logs the exit code
   /// - Cleans up thread state
   /// - Notifies the session of disconnection (if not intentional)
   private func runMainloopThread() {
-    guard let vpnInfo = self.vpnInfo else {
-      mainloopLock.lock()
-      isMainloopRunning = false
-      mainloopLock.unlock()
-      return
-    }
+    var wasReconnecting = false
 
     while true {
       // Call the OpenConnect mainloop with reconnection parameters
@@ -122,22 +120,47 @@ extension VpnContext {
       // If ret == 0, the mainloop exited normally (usually after a successful
       // reconnect or command processing). Continue the loop to keep the
       // connection alive.
+
+      // Check if we were reconnecting - if so, we've successfully reconnected
+      if wasReconnecting {
+        updateStatus(.connected)
+        session?.handleReconnected()
+        wasReconnecting = false
+      }
+
+      // Mark that we're in reconnection mode for next iteration
+      stateLock.lock()
+      if connectionStatus.isConnected {
+        wasReconnecting = true
+        connectionStatus = .reconnecting
+        let status = connectionStatus
+        stateLock.unlock()
+        session?.handleStatusChange(status: status)
+      } else {
+        stateLock.unlock()
+      }
     }
 
-    // Mainloop has exited
-    mainloopLock.lock()
-    isMainloopRunning = false
-    mainloopLock.unlock()
+    // Determine disconnect reason
+    let error: VpnError?
+    stateLock.lock()
+    let wasUserInitiated = connectionStatus.isDisconnected
+    stateLock.unlock()
 
-    // Only notify if this wasn't an intentional disconnect
-    if !intentionalDisconnect {
-      // Notify session of disconnection with error if available
-      let disconnectReason = lastError
-      session?.handleDisconnect(reason: disconnectReason)
+    if wasUserInitiated {
+      error = nil  // User requested disconnect
+    } else if let storedError = lastError {
+      // Use the stored error directly
+      error = storedError
+    } else {
+      error = .connectionFailed(reason: "Connection lost")
     }
 
-    // Clear the error and reset flag
+    updateStatus(.disconnected(error: error))
+
+    // Always notify - let the session decide what to do
+    session?.handleDisconnect(reason: error?.localizedDescription)
+
     lastError = nil
-    intentionalDisconnect = false
   }
 }

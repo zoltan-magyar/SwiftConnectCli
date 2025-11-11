@@ -22,6 +22,19 @@ import Foundation
 ///
 /// let session = VpnSession(configuration: config)
 ///
+/// session.onStatusChanged = { status in
+///     switch status {
+///     case .disconnected(let error):
+///         print("Disconnected: \(error?.localizedDescription ?? "user initiated")")
+///     case .connecting(let stage):
+///         print("Connecting: \(stage)")
+///     case .connected:
+///         print("Connected!")
+///     case .reconnecting:
+///         print("Reconnecting...")
+///     }
+/// }
+///
 /// session.onLog = { message, level in
 ///     print("[\(level)] \(message)")
 /// }
@@ -38,8 +51,17 @@ public class VpnSession {
   /// The configuration for this VPN session.
   public let configuration: VpnConfiguration
 
-  /// Whether the VPN is currently connected.
-  public private(set) var isConnected: Bool = false
+  /// The current connection status of the VPN session.
+  ///
+  /// This property provides detailed information about the connection state,
+  /// including any errors that caused disconnection and progress messages
+  /// during connection establishment.
+  ///
+  /// Use the `onStatusChanged` callback to receive real-time updates when
+  /// the status changes.
+  public var connectionStatus: ConnectionStatus {
+    return context?.status ?? .disconnected(error: nil)
+  }
 
   /// The name of the network interface assigned to the VPN tunnel.
   ///
@@ -50,16 +72,42 @@ public class VpnSession {
     return context?.assignedInterfaceName
   }
 
-  /// Whether the OpenConnect mainloop is currently running.
-  ///
-  /// The mainloop handles VPN traffic routing and runs on a background thread.
-  /// This will be `true` after successful connection and `false` when disconnected
-  /// or if the connection hasn't been established yet.
-  public var isMainloopRunning: Bool {
-    return context?.mainloopRunning ?? false
-  }
-
   // MARK: - Callback Handlers
+
+  /// Called when the connection status changes.
+  ///
+  /// This callback provides real-time updates about the connection lifecycle,
+  /// including:
+  /// - Connection progress during establishment (e.g., "Authenticating...", "Setting up DTLS")
+  /// - Successful connection
+  /// - Disconnection (with optional error information)
+  /// - Reconnection attempts
+  ///
+  /// ## Example Usage
+  ///
+  /// ```swift
+  /// session.onStatusChanged = { status in
+  ///     switch status {
+  ///     case .disconnected(let error):
+  ///         if let error = error {
+  ///             print("Disconnected with error: \(error)")
+  ///         } else {
+  ///             print("Disconnected normally")
+  ///         }
+  ///     case .connecting(let stage):
+  ///         print("Progress: \(stage)")
+  ///     case .connected:
+  ///         print("Successfully connected!")
+  ///     case .reconnecting:
+  ///         print("Connection lost, reconnecting...")
+  ///     }
+  /// }
+  /// ```
+  ///
+  /// If not set, status changes are silently ignored.
+  ///
+  /// - Parameter status: The new connection status
+  public var onStatusChanged: ((ConnectionStatus) -> Void)?
 
   /// Called when the server certificate needs validation.
   ///
@@ -158,7 +206,7 @@ public class VpnSession {
   ///
   /// - Throws: `VpnError` if connection fails at any step
   public func connect() throws {
-    guard !isConnected else {
+    guard connectionStatus.isDisconnected else {
       return
     }
 
@@ -167,19 +215,16 @@ public class VpnSession {
     }
 
     try context?.connect()
-
-    isConnected = true
   }
 
   /// Disconnects from the VPN server.
   public func disconnect() {
-    guard isConnected else {
+    guard !connectionStatus.isDisconnected else {
       return
     }
 
     context?.disconnect()
     context = nil
-    isConnected = false
 
     // Notify that we disconnected intentionally (no error)
     onDisconnect?(nil)
@@ -198,7 +243,7 @@ public class VpnSession {
   /// - Returns: `true` if the request was sent successfully, `false` otherwise
   @discardableResult
   public func requestStats() -> Bool {
-    guard isConnected else {
+    guard connectionStatus.isConnected else {
       return false
     }
 
@@ -231,33 +276,15 @@ public class VpnSession {
   /// Handles authentication form requests from OpenConnect.
   ///
   /// - Parameter form: The authentication form to fill
-  /// - Returns: The filled form
+  /// - Returns: The filled form, or the original form if no handler is set
   internal func handleAuthenticationForm(_ form: AuthenticationForm) -> AuthenticationForm {
-    if let handler = onAuthenticationRequired {
-      return handler(form)
-    } else {
-      // Attempt to use credentials from configuration
-      var filledForm = form
-
-      for (index, field) in filledForm.fields.enumerated() {
-        switch field.type {
-        case .text:
-          if field.label.lowercased().contains("user"),
-            let username = configuration.username
-          {
-            filledForm.fields[index].value = username
-          }
-        case .password:
-          if let password = configuration.password {
-            filledForm.fields[index].value = password
-          }
-        default:
-          break
-        }
-      }
-
-      return filledForm
+    guard let handler = onAuthenticationRequired else {
+      // No handler provided - return the form unchanged
+      // The caller is responsible for setting onAuthenticationRequired
+      return form
     }
+
+    return handler(form)
   }
 
   /// Handles reconnection notification from OpenConnect.
@@ -285,5 +312,14 @@ public class VpnSession {
   /// - Parameter reason: Optional error message if disconnect was due to failure
   internal func handleDisconnect(reason: String?) {
     onDisconnect?(reason)
+  }
+
+  /// Handles connection status changes from OpenConnect.
+  ///
+  /// This is called by the internal context whenever the connection status changes.
+  ///
+  /// - Parameter status: The new connection status
+  internal func handleStatusChange(status: ConnectionStatus) {
+    onStatusChanged?(status)
   }
 }

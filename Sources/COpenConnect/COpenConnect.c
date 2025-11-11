@@ -7,8 +7,7 @@
 //  va_list
 //
 //  This implementation is stateless - it formats the message in C and calls
-//  into Swift which maintains a registry mapping privdata pointers to
-//  callbacks.
+//  into Swift which uses privdata to access the VpnContext.
 //
 
 #include "include/COpenConnect.h"
@@ -63,20 +62,3 @@ void progress_shim_callback(void *privdata, int level, const char *fmt, ...) {
 openconnect_progress_vfn get_progress_shim_callback(void) {
   return &progress_shim_callback;
 }
-
-// Forward declarations for Swift callbacks defined with @_cdecl
-// extern int validatePeerCertCallback(void *privdata, const char *reason);
-// extern int processAuthFormCallback(void *privdata, struct oc_auth_form
-// *form);
-
-// Returns a pointer to the certificate validation callback
-// This avoids Swift thunk generation issues
-// openconnect_validate_peer_cert_vfn get_cert_validation_callback(void) {
-//   return &validatePeerCertCallback;
-// }
-
-// Returns a pointer to the auth form callback
-// This avoids Swift thunk generation issues
-// openconnect_process_auth_form_vfn get_auth_form_callback(void) {
-//   return &processAuthFormCallback;
-// }
