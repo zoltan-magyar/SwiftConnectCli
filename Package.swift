@@ -1,9 +1,9 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.2
 import PackageDescription
 
 let package = Package(
   name: "SwiftConnectCli",
-  platforms: [.macOS(.v13)],
+  platforms: [.macOS(.v26)],
   products: [
     .library(name: "OpenConnectKit", targets: ["OpenConnectKit"]),
     .executable(name: "swiftconnect-cli", targets: ["SwiftConnectCli"]),
@@ -30,7 +30,8 @@ let package = Package(
     // Swift library wrapping OpenConnect with Swift-native API
     .target(
       name: "OpenConnectKit",
-      dependencies: ["COpenConnect"]
+      dependencies: ["COpenConnect"],
+      exclude: ["VpnSession+Async.swift"]
     ),
     .executableTarget(
       name: "SwiftConnectCli",
@@ -41,3 +42,4 @@ let package = Package(
     ),
   ]
 )
+

@@ -203,7 +203,6 @@ public class VpnSession: @unchecked Sendable {
   public func connect() throws {
     guard case .disconnected = connectionStatus else {
       throw VpnError.alreadyConnected
-      return
     }
 
     if context == nil {

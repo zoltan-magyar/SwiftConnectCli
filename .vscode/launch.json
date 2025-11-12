@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:SwiftConnectCli}",
+            "name": "Debug swiftconnect-cli",
+            "target": "swiftconnect-cli",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug swiftconnect-cli"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:SwiftConnectCli}",
+            "name": "Release swiftconnect-cli",
+            "target": "swiftconnect-cli",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release swiftconnect-cli"
+        }
+    ]
+}
