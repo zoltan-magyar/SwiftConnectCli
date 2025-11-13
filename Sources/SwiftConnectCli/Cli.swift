@@ -15,12 +15,34 @@ import OpenConnectKit
   import Glibc
 #endif
 
+// Actor to manage signal handlers and timers in a concurrency-safe way
+actor SignalManager {
+  private var signalSources: [DispatchSourceSignal] = []
+  private var statsTimer: DispatchSourceTimer?
+
+  nonisolated func addSignalSource(_ source: DispatchSourceSignal) {
+    // Since DispatchSource manages its own lifecycle and we're just keeping
+    // a reference to prevent deallocation, we can use nonisolated
+    Task { await self._addSignalSource(source) }
+  }
+
+  private func _addSignalSource(_ source: DispatchSourceSignal) {
+    signalSources.append(source)
+  }
+
+  nonisolated func setStatsTimer(_ timer: DispatchSourceTimer) {
+    Task { await self._setStatsTimer(timer) }
+  }
+
+  private func _setStatsTimer(_ timer: DispatchSourceTimer) {
+    statsTimer = timer
+  }
+}
+
 @main
 struct Cli: ParsableCommand {
-  // Signal sources for handling Ctrl+C and termination
-  private static var signalSources: [DispatchSourceSignal] = []
-  // Timer for periodic stats updates
-  private static var statsTimer: DispatchSourceTimer?
+  // Signal and timer manager for concurrency-safe resource handling
+  private nonisolated(unsafe) static var signalManager: SignalManager?
 
   static let configuration = CommandConfiguration(
     commandName: "swiftconnect-cli",
@@ -329,10 +351,16 @@ struct Cli: ParsableCommand {
     }
     timer.resume()
 
-    Cli.statsTimer = timer
+    // Store timer in the signal manager
+    Cli.signalManager?.setStatsTimer(timer)
   }
 
   private func setupSignalHandlers(session: VpnSession) {
+    // Create signal manager if it doesn't exist
+    if Cli.signalManager == nil {
+      Cli.signalManager = SignalManager()
+    }
+
     // Ignore default signal handlers
     signal(SIGINT, SIG_IGN)
     signal(SIGTERM, SIG_IGN)
@@ -349,7 +377,9 @@ struct Cli: ParsableCommand {
       Foundation.exit(0)
     }
     sigintSource.resume()
-    Cli.signalSources.append(sigintSource)
+
+    // Store signal source in the manager
+    Cli.signalManager?.addSignalSource(sigintSource)
 
     // Handle SIGTERM
     let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
@@ -363,6 +393,8 @@ struct Cli: ParsableCommand {
       Foundation.exit(0)
     }
     sigtermSource.resume()
-    Cli.signalSources.append(sigtermSource)
+
+    // Store signal source in the manager
+    Cli.signalManager?.addSignalSource(sigtermSource)
   }
 }
