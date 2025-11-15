@@ -44,6 +44,9 @@ struct Cli: ParsableCommand {
   // Signal and timer manager for concurrency-safe resource handling
   private nonisolated(unsafe) static var signalManager: SignalManager?
 
+  // Delegate handler for VPN session events
+  private nonisolated(unsafe) static var sessionHandler: CliVpnHandler?
+
   static let configuration = CommandConfiguration(
     commandName: "swiftconnect-cli",
     abstract: "A Swift CLI for OpenConnect VPN",
@@ -131,11 +134,15 @@ struct Cli: ParsableCommand {
     print("  Log Level: \(logLevel)")
     print()
 
-    // Create VPN session
-    let session = VpnSession(configuration: config)
+    // Create delegate handler
+    let handler = CliVpnHandler()
+    Cli.sessionHandler = handler
 
-    // Configure session handlers
-    configureSessionHandlers(session: session)
+    // Create VPN session with delegate
+    let session = VpnSession(configuration: config, delegate: handler)
+
+    // Set optional logging delegate
+    session.loggingDelegate = handler
 
     // Set up signal handlers for graceful shutdown
     setupSignalHandlers(session: session)
@@ -176,168 +183,6 @@ struct Cli: ParsableCommand {
       print()
       throw ExitCode.failure
     }
-  }
-
-  // MARK: - Session Configuration
-
-  private func configureSessionHandlers(session: VpnSession) {
-    // Status change handler - show connection progress
-    session.onStatusChanged = { status in
-      let timestamp = DateFormatter.localizedString(
-        from: Date(),
-        dateStyle: .none,
-        timeStyle: .medium
-      )
-
-      switch status {
-      case .disconnected(let error):
-        print("\n" + String(repeating: "=", count: 60))
-        if let error = error {
-          print("❌ Disconnected: \(error.localizedDescription)")
-          print("[\(timestamp)] ❌ Status: Disconnected - \(error.localizedDescription)")
-        } else {
-          print("✅ Disconnected")
-          print("[\(timestamp)] ℹ️  Status: Disconnected")
-        }
-        print(String(repeating: "=", count: 60))
-        print()
-
-        // Exit the program after disconnect
-        Foundation.exit(0)
-      case .connecting(let stage):
-        print("[\(timestamp)] 🔄 Status: \(stage)")
-      case .connected:
-        print("[\(timestamp)] ✅ Status: Connected!")
-        // Display interface name now that TUN setup is complete
-        if let ifname = session.interfaceName {
-          print("[\(timestamp)] 🌐 Network Interface: \(ifname)")
-        }
-      case .reconnecting:
-        print("\n" + String(repeating: "=", count: 60))
-        print("🔄 VPN connection reconnecting after connection loss...")
-        print(String(repeating: "=", count: 60))
-        print()
-        print("[\(timestamp)] 🔄 Status: Reconnecting...")
-      }
-    }
-
-    // Log handler - format log messages nicely
-    session.onLog = { message, level in
-      let timestamp = DateFormatter.localizedString(
-        from: Date(),
-        dateStyle: .none,
-        timeStyle: .medium
-      )
-
-      let prefix: String
-
-      switch level {
-      case .error:
-        prefix = "ERROR"
-      case .info:
-        prefix = "INFO"
-      case .debug:
-        prefix = "DEBUG"
-      case .trace:
-        prefix = "TRACE"
-      }
-
-      print("[\(timestamp)] \(prefix): \(message)")
-    }
-
-    // Certificate validation handler
-    session.onCertificateValidation = { certInfo in
-      print("\n" + String(repeating: "=", count: 60))
-      print("⚠️  Certificate Validation Required")
-      print(String(repeating: "=", count: 60))
-      print("\nReason: \(certInfo.reason)")
-      if let hostname = certInfo.hostname {
-        print("Hostname: \(hostname)")
-      }
-
-      print("Do you want to accept this certificate? [y/N]: ", terminator: " ")
-
-      if let response = readLine()?.lowercased(), response == "y" || response == "yes" {
-        print("\n✅ Certificate accepted")
-        return true
-      } else {
-        print("\n❌ Certificate rejected")
-        return false
-      }
-    }
-
-    // Authentication handler - use secure input for passwords
-    session.onAuthenticationRequired = { form in
-      print("\n" + String(repeating: "=", count: 60))
-      print("🔐 Authentication Required")
-      print(String(repeating: "=", count: 60))
-
-      if let title = form.title {
-        print("\n\(title)")
-      }
-      if let message = form.message {
-        print("\(message)")
-      }
-      print()
-
-      var filledForm = form
-
-      // Fill in form fields by prompting user
-      for (index, field) in filledForm.fields.enumerated() {
-        switch field.type {
-        case .password:
-          // Use secure input for password fields
-          print("\(field.label)")
-          if let password = SecureInput.read(prompt: "> ") {
-            filledForm.fields[index].value = password
-          } else {
-            print("⚠️  Warning: Empty password entered")
-            filledForm.fields[index].value = ""
-          }
-
-        case .text:
-          print("\(field.label)")
-          print("> ", terminator: "")
-          if let input = readLine() {
-            filledForm.fields[index].value = input
-          }
-
-        case .hidden:
-          // Skip hidden fields
-          continue
-
-        case .select(let options):
-          print("\n\(field.label)")
-          for (idx, option) in options.enumerated() {
-            print("  \(idx + 1). \(option)")
-          }
-          print("> ", terminator: "")
-          if let input = readLine(), let selection = Int(input),
-            selection > 0 && selection <= options.count
-          {
-            filledForm.fields[index].value = options[selection - 1]
-          }
-        }
-      }
-
-      print()
-      return filledForm
-    }
-
-    // Statistics handler
-    session.onStats = { stats in
-      let timestamp = DateFormatter.localizedString(
-        from: Date(),
-        dateStyle: .none,
-        timeStyle: .medium
-      )
-
-      print("[\(timestamp)] 📊 Statistics:")
-      print("  ↑ TX: \(stats.formattedTxBytes) (\(stats.txPackets) packets)")
-      print("  ↓ RX: \(stats.formattedRxBytes) (\(stats.rxPackets) packets)")
-      print("  ∑ Total: \(stats.formattedTotalBytes)")
-    }
-
   }
 
   // MARK: - Connection Monitoring
@@ -396,5 +241,171 @@ struct Cli: ParsableCommand {
 
     // Store signal source in the manager
     Cli.signalManager?.addSignalSource(sigtermSource)
+  }
+}
+
+// MARK: - VPN Session Delegate Handler
+
+/// Handles VPN session events for the CLI application
+class CliVpnHandler: VpnSessionDelegate, VpnSessionLoggingDelegate {
+
+  // MARK: - VpnSessionDelegate
+
+  func vpnSession(_ session: VpnSession, didChangeStatus status: ConnectionStatus) {
+    let timestamp = DateFormatter.localizedString(
+      from: Date(),
+      dateStyle: .none,
+      timeStyle: .medium
+    )
+
+    switch status {
+    case .disconnected(let error):
+      print("\n" + String(repeating: "=", count: 60))
+      if let error = error {
+        print("❌ Disconnected: \(error.localizedDescription)")
+        print("[\(timestamp)] ❌ Status: Disconnected - \(error.localizedDescription)")
+      } else {
+        print("✅ Disconnected")
+        print("[\(timestamp)] ℹ️  Status: Disconnected")
+      }
+      print(String(repeating: "=", count: 60))
+      print()
+
+      // Exit the program after disconnect
+      Foundation.exit(0)
+
+    case .connecting(let stage):
+      print("[\(timestamp)] 🔄 Status: \(stage)")
+
+    case .connected:
+      print("[\(timestamp)] ✅ Status: Connected!")
+      // Display interface name now that TUN setup is complete
+      if let ifname = session.interfaceName {
+        print("[\(timestamp)] 🌐 Network Interface: \(ifname)")
+      }
+
+    case .reconnecting:
+      print("\n" + String(repeating: "=", count: 60))
+      print("🔄 VPN connection reconnecting after connection loss...")
+      print(String(repeating: "=", count: 60))
+      print()
+      print("[\(timestamp)] 🔄 Status: Reconnecting...")
+    }
+  }
+
+  func vpnSession(_ session: VpnSession, requiresAuthentication form: AuthenticationForm)
+    -> AuthenticationForm
+  {
+    print("\n" + String(repeating: "=", count: 60))
+    print("🔐 Authentication Required")
+    print(String(repeating: "=", count: 60))
+
+    if let title = form.title {
+      print("\n\(title)")
+    }
+    if let message = form.message {
+      print("\(message)")
+    }
+    print()
+
+    var filledForm = form
+
+    // Fill in form fields by prompting user
+    for (index, field) in filledForm.fields.enumerated() {
+      switch field.type {
+      case .password:
+        // Use secure input for password fields
+        print("\(field.label)")
+        if let password = SecureInput.read(prompt: "> ") {
+          filledForm.fields[index].value = password
+        } else {
+          print("⚠️  Warning: Empty password entered")
+          filledForm.fields[index].value = ""
+        }
+
+      case .text:
+        print("\(field.label)")
+        print("> ", terminator: "")
+        if let input = readLine() {
+          filledForm.fields[index].value = input
+        }
+
+      case .hidden:
+        // Skip hidden fields
+        continue
+
+      case .select(let options):
+        print("\n\(field.label)")
+        for (idx, option) in options.enumerated() {
+          print("  \(idx + 1). \(option)")
+        }
+        print("> ", terminator: "")
+        if let input = readLine(), let selection = Int(input),
+          selection > 0 && selection <= options.count
+        {
+          filledForm.fields[index].value = options[selection - 1]
+        }
+      }
+    }
+
+    print()
+    return filledForm
+  }
+
+  func vpnSession(_ session: VpnSession, shouldAcceptCertificate info: CertificateInfo) -> Bool {
+    print("\n" + String(repeating: "=", count: 60))
+    print("⚠️  Certificate Validation Required")
+    print(String(repeating: "=", count: 60))
+    print("\nReason: \(info.reason)")
+    if let hostname = info.hostname {
+      print("Hostname: \(hostname)")
+    }
+
+    print("Do you want to accept this certificate? [y/N]: ", terminator: " ")
+
+    if let response = readLine()?.lowercased(), response == "y" || response == "yes" {
+      print("\n✅ Certificate accepted")
+      return true
+    } else {
+      print("\n❌ Certificate rejected")
+      return false
+    }
+  }
+
+  // MARK: - VpnSessionLoggingDelegate
+
+  func vpnSession(_ session: VpnSession, didLog message: String, level: LogLevel) {
+    let timestamp = DateFormatter.localizedString(
+      from: Date(),
+      dateStyle: .none,
+      timeStyle: .medium
+    )
+
+    let prefix: String
+    switch level {
+    case .error:
+      prefix = "ERROR"
+    case .info:
+      prefix = "INFO"
+    case .debug:
+      prefix = "DEBUG"
+    case .trace:
+      prefix = "TRACE"
+    }
+
+    print("[\(timestamp)] \(prefix): \(message)")
+  }
+
+  func vpnSession(_ session: VpnSession, didReceiveStats stats: VpnStats) {
+    let timestamp = DateFormatter.localizedString(
+      from: Date(),
+      dateStyle: .none,
+      timeStyle: .medium
+    )
+
+    print("[\(timestamp)] 📊 Statistics:")
+    print("  ↑ TX: \(stats.formattedTxBytes) (\(stats.txPackets) packets)")
+    print("  ↓ RX: \(stats.formattedRxBytes) (\(stats.rxPackets) packets)")
+    print("  ∑ Total: \(stats.formattedTotalBytes)")
   }
 }

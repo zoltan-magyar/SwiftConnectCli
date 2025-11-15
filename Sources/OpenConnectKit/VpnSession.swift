@@ -13,39 +13,31 @@ import Foundation
 /// OpenConnect VPN connections. All C interop is handled internally, exposing
 /// a clean, type-safe interface.
 ///
-/// **Thread Safety**: All methods are thread-safe. Callbacks may be invoked on
-/// background threads - use `DispatchQueue.main.async` when updating UI.
+/// **Thread Safety**: All methods are thread-safe. Delegate methods may be invoked
+/// on background threads - use `DispatchQueue.main.async` when updating UI.
 ///
 /// ## Example Usage
 ///
 /// ```swift
-/// let config = VpnConfiguration(
-///     serverURL: URL(string: "https://vpn.example.com")!
-/// )
+/// class MyHandler: VpnSessionDelegate {
+///     func vpnSession(_ session: VpnSession, didChangeStatus status: ConnectionStatus) {
+///         print("Status: \(status)")
+///     }
 ///
-/// let session = VpnSession(configuration: config)
+///     func vpnSession(_ session: VpnSession, requiresAuthentication form: AuthenticationForm) -> AuthenticationForm {
+///         var filledForm = form
+///         // Fill in authentication fields
+///         return filledForm
+///     }
 ///
-/// session.onStatusChanged = { status in
-///     switch status {
-///     case .disconnected(let error):
-///         print("Disconnected: \(error?.localizedDescription ?? "user initiated")")
-///     case .connecting(let stage):
-///         print("Connecting: \(stage)")
-///     case .connected:
-///         print("Connected!")
-///     case .reconnecting:
-///         print("Reconnecting...")
+///     func vpnSession(_ session: VpnSession, shouldAcceptCertificate info: CertificateInfo) -> Bool {
+///         return true
 ///     }
 /// }
 ///
-/// session.onLog = { message, level in
-///     print("[\(level)] \(message)")
-/// }
-///
-/// session.onCertificateValidation = { certInfo in
-///     return true  // Accept certificate
-/// }
-///
+/// let config = VpnConfiguration(serverURL: URL(string: "https://vpn.example.com")!)
+/// let handler = MyHandler()
+/// let session = VpnSession(configuration: config, delegate: handler)
 /// try session.connect()
 /// ```
 public class VpnSession: @unchecked Sendable {
@@ -60,8 +52,8 @@ public class VpnSession: @unchecked Sendable {
   /// including any errors that caused disconnection and progress messages
   /// during connection establishment.
   ///
-  /// Use the `onStatusChanged` callback to receive real-time updates when
-  /// the status changes.
+  /// Use the delegate's `vpnSession(_:didChangeStatus:)` method to receive
+  /// real-time updates when the status changes.
   public var connectionStatus: ConnectionStatus {
     return context?.status ?? .disconnected(error: nil)
   }
@@ -75,13 +67,12 @@ public class VpnSession: @unchecked Sendable {
   /// **Important**: The interface name becomes available only when the connection
   /// status changes to `.connected`. During the `connect()` call, the TUN device
   /// setup happens asynchronously in a background thread. To access the interface
-  /// name reliably, wait for the `onStatusChanged` callback to report `.connected`
-  /// status.
+  /// name reliably, wait for the delegate to report `.connected` status.
   ///
   /// ## Example Usage
   ///
   /// ```swift
-  /// session.onStatusChanged = { status in
+  /// func vpnSession(_ session: VpnSession, didChangeStatus status: ConnectionStatus) {
   ///     if case .connected = status {
   ///         if let ifname = session.interfaceName {
   ///             print("Interface: \(ifname)")
@@ -93,83 +84,26 @@ public class VpnSession: @unchecked Sendable {
     return context?.assignedInterfaceName
   }
 
-  // MARK: - Callback Handlers
+  // MARK: - Delegate Properties
 
-  /// Called when the connection status changes.
+  /// The primary delegate for connection lifecycle events.
   ///
-  /// This callback provides real-time updates about the connection lifecycle,
-  /// including:
-  /// - Connection progress during establishment (e.g., "Authenticating...", "Setting up DTLS")
-  /// - Successful connection
-  /// - Disconnection (with optional error information)
-  /// - Reconnection attempts
+  /// This delegate receives critical events including status changes,
+  /// authentication requests, and certificate validation.
   ///
-  /// ## Example Usage
-  ///
-  /// ```swift
-  /// session.onStatusChanged = { status in
-  ///     switch status {
-  ///     case .disconnected(let error):
-  ///         if let error = error {
-  ///             print("Disconnected with error: \(error)")
-  ///         } else {
-  ///             print("Disconnected normally")
-  ///         }
-  ///     case .connecting(let stage):
-  ///         print("Progress: \(stage)")
-  ///     case .connected:
-  ///         print("Successfully connected!")
-  ///     case .reconnecting:
-  ///         print("Connection lost, reconnecting...")
-  ///     }
-  /// }
-  /// ```
-  ///
-  /// If not set, status changes are silently ignored.
-  ///
-  /// - Parameter status: The new connection status
-  public var onStatusChanged: ((ConnectionStatus) -> Void)?
+  /// **Required**: You must set this delegate to receive connection events
+  /// and handle authentication. The delegate is not retained (weak reference)
+  /// to prevent retain cycles.
+  public weak var delegate: VpnSessionDelegate?
 
-  /// Called when the server certificate needs validation.
+  /// Optional delegate for logging and statistics.
   ///
-  /// Return `true` to accept the certificate, `false` to reject it.
-  /// If not set, uses `configuration.allowInsecureCertificates`.
+  /// Set this delegate if you want to receive log messages and traffic
+  /// statistics. Unlike the primary delegate, this is optional and can
+  /// be left unset if logging is not needed.
   ///
-  /// - Parameter certInfo: Information about the certificate to validate
-  /// - Returns: `true` to accept, `false` to reject
-  public var onCertificateValidation: ((CertificateInfo) -> Bool)?
-
-  /// Called when an authentication form needs to be filled.
-  ///
-  /// Modify and return the form with filled-in field values.
-  /// If not set, attempts to use credentials from `configuration`.
-  ///
-  /// - Parameter form: The authentication form to fill
-  /// - Returns: The form with filled field values
-  public var onAuthenticationRequired: ((AuthenticationForm) -> AuthenticationForm)?
-
-  /// Called for log messages from the VPN session.
-  ///
-  /// If not set, log messages are silently ignored.
-  ///
-  /// - Parameters:
-  ///   - message: The log message
-  ///   - level: The log level
-  public var onLog: ((String, LogLevel) -> Void)?
-
-  /// Called when traffic statistics are received.
-  ///
-  /// This callback is triggered when statistics are requested via `requestStats()`
-  /// and the mainloop reports the current traffic data. Statistics include:
-  /// - Bytes and packets transmitted (sent)
-  /// - Bytes and packets received
-  ///
-  /// Statistics are cumulative since the connection was established.
-  ///
-  /// If not set, statistics are silently ignored.
-  ///
-  /// - Parameter stats: Current VPN traffic statistics
-  public var onStats: ((VpnStats) -> Void)?
+  /// The delegate is not retained (weak reference) to prevent retain cycles.
+  public weak var loggingDelegate: VpnSessionLoggingDelegate?
 
   // MARK: - Internal Properties
 
@@ -178,11 +112,14 @@ public class VpnSession: @unchecked Sendable {
 
   // MARK: - Initialization
 
-  /// Creates a new VPN session with the given configuration.
+  /// Creates a new VPN session with the given configuration and delegate.
   ///
-  /// - Parameter configuration: The VPN configuration
-  public init(configuration: VpnConfiguration) {
+  /// - Parameters:
+  ///   - configuration: The VPN configuration
+  ///   - delegate: The delegate to receive connection events
+  public init(configuration: VpnConfiguration, delegate: VpnSessionDelegate) {
     self.configuration = configuration
+    self.delegate = delegate
   }
 
   deinit {
@@ -195,9 +132,18 @@ public class VpnSession: @unchecked Sendable {
   ///
   /// This method performs the following steps:
   /// 1. Parses the server URL
-  /// 2. Obtains an authentication cookie (may trigger `onAuthenticationRequired`)
+  /// 2. Obtains an authentication cookie (may trigger delegate authentication callback)
   /// 3. Establishes the CSTP connection
   /// 4. Sets up DTLS for the data channel
+  ///
+  /// The delegate's `vpnSession(_:didChangeStatus:)` method will be called
+  /// throughout the connection process to report progress.
+  ///
+  /// If authentication is required, the delegate's
+  /// `vpnSession(_:requiresAuthentication:)` method will be called synchronously.
+  ///
+  /// If certificate validation is needed, the delegate's
+  /// `vpnSession(_:shouldAcceptCertificate:)` method will be called synchronously.
   ///
   /// - Throws: `VpnError` if connection fails at any step
   public func connect() throws {
@@ -213,6 +159,13 @@ public class VpnSession: @unchecked Sendable {
   }
 
   /// Disconnects from the VPN server.
+  ///
+  /// This method gracefully shuts down the VPN connection and cleans up
+  /// resources. After disconnection, the delegate's `vpnSession(_:didChangeStatus:)`
+  /// method will be called with a `.disconnected` status.
+  ///
+  /// This method is safe to call multiple times and will be automatically
+  /// called when the session is deallocated.
   public func disconnect() {
     // Only proceed if NOT already disconnected
     if case .disconnected = connectionStatus {
@@ -226,14 +179,16 @@ public class VpnSession: @unchecked Sendable {
   /// Requests traffic statistics from the VPN connection.
   ///
   /// This method sends a command to the mainloop to gather and report
-  /// current traffic statistics. The statistics will be delivered via
-  /// the `onStats` callback.
+  /// current traffic statistics. If a logging delegate is set, the statistics
+  /// will be delivered via the `vpnSession(_:didReceiveStats:)` method.
   ///
   /// Statistics include:
   /// - Bytes sent/received
   /// - Packets sent/received
   ///
-  /// - Returns: `true` if the request was sent successfully, `false` otherwise
+  /// The statistics are cumulative since the connection was established.
+  ///
+  /// - Returns: `true` if the request was sent successfully, `false` if not connected
   @discardableResult
   public func requestStats() -> Bool {
     guard case .connected = connectionStatus else {
@@ -247,55 +202,67 @@ public class VpnSession: @unchecked Sendable {
 
   /// Handles progress logging from OpenConnect.
   ///
+  /// This is called by the internal context when log messages are received
+  /// from the OpenConnect library.
+  ///
   /// - Parameters:
   ///   - level: The log level
   ///   - message: The log message
   internal func handleProgress(level: LogLevel, message: String) {
-    onLog?(message, level)
+    loggingDelegate?.vpnSession(self, didLog: message, level: level)
   }
 
   /// Handles certificate validation requests from OpenConnect.
   ///
+  /// This is called by the internal context when a server certificate needs
+  /// validation. The delegate's response determines whether the connection proceeds.
+  ///
   /// - Parameter certInfo: Information about the certificate
-  /// - Returns: `true` to accept, `false` to reject
+  /// - Returns: `true` to accept the certificate, `false` to reject
   internal func handleCertificateValidation(certInfo: CertificateInfo) -> Bool {
-    if let handler = onCertificateValidation {
-      return handler(certInfo)
-    } else {
+    guard let delegate = delegate else {
+      // No delegate - fall back to configuration setting
       return configuration.allowInsecureCertificates
     }
+
+    return delegate.vpnSession(self, shouldAcceptCertificate: certInfo)
   }
 
   /// Handles authentication form requests from OpenConnect.
   ///
+  /// This is called by the internal context when the server requires authentication.
+  /// The delegate must fill in the form fields and return it.
+  ///
   /// - Parameter form: The authentication form to fill
-  /// - Returns: The filled form, or the original form if no handler is set
+  /// - Returns: The filled authentication form
   internal func handleAuthenticationForm(_ form: AuthenticationForm) -> AuthenticationForm {
-    guard let handler = onAuthenticationRequired else {
-      // No handler provided - return the form unchanged
-      // The caller is responsible for setting onAuthenticationRequired
+    guard let delegate = delegate else {
+      // No delegate - return the form unchanged
+      // This will likely cause authentication to fail, but that's expected
+      // if the delegate wasn't set properly
       return form
     }
 
-    return handler(form)
+    return delegate.vpnSession(self, requiresAuthentication: form)
   }
 
   /// Handles statistics notification from OpenConnect.
   ///
   /// This is called by the internal context when statistics are received
-  /// from the mainloop.
+  /// from the mainloop in response to a `requestStats()` call.
   ///
   /// - Parameter stats: The VPN traffic statistics
   internal func handleStats(_ stats: VpnStats) {
-    onStats?(stats)
+    loggingDelegate?.vpnSession(self, didReceiveStats: stats)
   }
 
   /// Handles connection status changes from OpenConnect.
   ///
   /// This is called by the internal context whenever the connection status changes.
+  /// The delegate is notified of the status change.
   ///
   /// - Parameter status: The new connection status
   internal func handleStatusChange(status: ConnectionStatus) {
-    onStatusChanged?(status)
+    delegate?.vpnSession(self, didChangeStatus: status)
   }
 }
