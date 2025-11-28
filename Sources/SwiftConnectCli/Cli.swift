@@ -15,37 +15,27 @@ import OpenConnectKit
   import Glibc
 #endif
 
-// Actor to manage signal handlers and timers in a concurrency-safe way
-actor SignalManager {
+// Simple class to manage signal handlers and timers
+class SignalManager {
   private var signalSources: [DispatchSourceSignal] = []
   private var statsTimer: DispatchSourceTimer?
 
-  nonisolated func addSignalSource(_ source: DispatchSourceSignal) {
-    // Since DispatchSource manages its own lifecycle and we're just keeping
-    // a reference to prevent deallocation, we can use nonisolated
-    Task { await self._addSignalSource(source) }
-  }
-
-  private func _addSignalSource(_ source: DispatchSourceSignal) {
+  func addSignalSource(_ source: DispatchSourceSignal) {
     signalSources.append(source)
   }
 
-  nonisolated func setStatsTimer(_ timer: DispatchSourceTimer) {
-    Task { await self._setStatsTimer(timer) }
-  }
-
-  private func _setStatsTimer(_ timer: DispatchSourceTimer) {
+  func setStatsTimer(_ timer: DispatchSourceTimer) {
     statsTimer = timer
   }
 }
 
 @main
 struct Cli: ParsableCommand {
-  // Signal and timer manager for concurrency-safe resource handling
-  private nonisolated(unsafe) static var signalManager: SignalManager?
+  // Signal and timer manager for resource handling
+  private static var signalManager: SignalManager?
 
   // Delegate handler for VPN session events
-  private nonisolated(unsafe) static var sessionHandler: CliVpnHandler?
+  private static var sessionHandler: CliVpnHandler?
 
   static let configuration = CommandConfiguration(
     commandName: "swiftconnect-cli",

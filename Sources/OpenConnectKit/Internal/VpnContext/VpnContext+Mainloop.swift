@@ -65,18 +65,6 @@ extension VpnContext {
       if ret != 0 {
         break
       }
-
-      // ret == 0: mainloop exited normally (reconnect or command)
-      // If we were connected, connection dropped - set to reconnecting
-      stateLock.lock()
-      if case .connected = connectionStatus {
-        connectionStatus = .reconnecting
-        let status = connectionStatus
-        stateLock.unlock()
-        session.handleStatusChange(status: status)
-      } else {
-        stateLock.unlock()
-      }
     }
 
     let error: VpnError?
@@ -87,11 +75,11 @@ extension VpnContext {
       error = nil
     default:
       stateLock.unlock()
-      error = lastError ?? .connectionFailed(reason: "Connection lost")
+      error = setupError ?? .connectionFailed(reason: "Connection lost")
     }
 
     updateStatus(.disconnected(error: error))
 
-    lastError = nil
+    setupError = nil
   }
 }

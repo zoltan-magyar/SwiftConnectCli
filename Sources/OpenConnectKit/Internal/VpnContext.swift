@@ -13,7 +13,7 @@ import Foundation
 #endif
 
 // Internal context managing OpenConnect C API
-internal class VpnContext: @unchecked Sendable {
+internal class VpnContext {
   // MARK: - Properties
 
   internal var connectionStatus: ConnectionStatus = .disconnected(error: nil)
@@ -35,7 +35,7 @@ internal class VpnContext: @unchecked Sendable {
   #endif
 
   internal var mainloopThread: Thread?
-  internal var lastError: VpnError?
+  internal var setupError: VpnError?
 
   // MARK: - Command Types
 

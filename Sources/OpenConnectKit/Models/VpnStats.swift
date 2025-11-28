@@ -26,7 +26,7 @@ import Foundation
 /// // Request statistics
 /// session.requestStats()
 /// ```
-public struct VpnStats: Sendable {
+public struct VpnStats {
   // MARK: - Properties
 
   /// Number of packets transmitted (sent) through the VPN.

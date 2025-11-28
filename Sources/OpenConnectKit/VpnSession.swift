@@ -40,7 +40,7 @@ import Foundation
 /// let session = VpnSession(configuration: config, delegate: handler)
 /// try session.connect()
 /// ```
-public class VpnSession: @unchecked Sendable {
+public class VpnSession {
   // MARK: - Public Properties
 
   /// The configuration for this VPN session.

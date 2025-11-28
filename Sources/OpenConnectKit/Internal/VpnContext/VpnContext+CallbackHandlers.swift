@@ -129,7 +129,7 @@ internal func setupTunCallback(privdata: UnsafeMutableRawPointer?) {
   context.updateStatus(.connecting(stage: "Configuring tunnel"))
 
   guard let vpncScriptPath = try? context.findVpncScript() else {
-    context.lastError = .vpncScriptFailed
+    context.setupError = .vpncScriptFailed
     return
   }
 
@@ -143,7 +143,7 @@ internal func setupTunCallback(privdata: UnsafeMutableRawPointer?) {
 
   let ret = openconnect_setup_tun_device(context.vpnInfo, vpncScriptPtr, interfaceNamePtr)
   if ret != 0 {
-    context.lastError = .tunSetupFailed
+    context.setupError = .tunSetupFailed
   } else {
     // TUN device setup succeeded - update status to connected
     // The interface name is now available via openconnect_get_ifname()
