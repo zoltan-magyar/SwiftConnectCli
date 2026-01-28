@@ -47,7 +47,7 @@ internal func progressCallback(
   context.session.handleProgress(level: logLevel, message: message)
 }
 
-// C callback for certificate validation. Returns 0 to accept, 1 to reject.
+/// C callback for certificate validation. Returns 0 to accept, 1 to reject.
 internal func validatePeerCertCallback(
   privdata: UnsafeMutableRawPointer?,
   reason: UnsafePointer<CChar>?
@@ -63,7 +63,7 @@ internal func validatePeerCertCallback(
   return accepted ? 0 : 1
 }
 
-// C callback for authentication forms. Returns 0 for success, 1 for failure.
+/// C callback for authentication forms. Returns 0 for success, 1 for failure.
 internal func processAuthFormCallback(
   privdata: UnsafeMutableRawPointer?,
   form: UnsafeMutablePointer<oc_auth_form>?
@@ -84,7 +84,7 @@ internal func processAuthFormCallback(
   return 0
 }
 
-// C callback when reconnection succeeds. Updates status to .connected.
+/// C callback when reconnection succeeds. Updates status to .connected.
 internal func reconnectedCallback(privdata: UnsafeMutableRawPointer?) {
   guard let privdata = privdata else {
     return
@@ -94,7 +94,7 @@ internal func reconnectedCallback(privdata: UnsafeMutableRawPointer?) {
   context.updateStatus(.connected)
 }
 
-// C callback for traffic statistics. Triggered by requestStats() command.
+/// C callback for traffic statistics. Triggered by requestStats() command.
 internal func statsCallback(
   privdata: UnsafeMutableRawPointer?,
   stats: UnsafePointer<oc_stats>?
@@ -118,7 +118,7 @@ internal func statsCallback(
   context.session.handleStats(vpnStats)
 }
 
-// C callback for TUN device setup. Called during connection establishment.
+/// C callback for TUN device setup. Called during connection establishment.
 internal func setupTunCallback(privdata: UnsafeMutableRawPointer?) {
   guard let privdata = privdata else {
     return
@@ -128,8 +128,13 @@ internal func setupTunCallback(privdata: UnsafeMutableRawPointer?) {
 
   context.updateStatus(.connecting(stage: "Configuring tunnel"))
 
-  guard let vpncScriptPath = try? context.findVpncScript() else {
+  guard let vpncScriptPath = context.findVpncScript() else {
     context.setupError = .vpncScriptFailed
+    return
+  }
+
+  guard let vpnInfo = context.vpnInfo else {
+    context.setupError = .notInitialized
     return
   }
 
@@ -141,7 +146,7 @@ internal func setupTunCallback(privdata: UnsafeMutableRawPointer?) {
     free(interfaceNamePtr)
   }
 
-  let ret = openconnect_setup_tun_device(context.vpnInfo, vpncScriptPtr, interfaceNamePtr)
+  let ret = openconnect_setup_tun_device(vpnInfo, vpncScriptPtr, interfaceNamePtr)
   if ret != 0 {
     context.setupError = .tunSetupFailed
   } else {
@@ -154,17 +159,23 @@ internal func setupTunCallback(privdata: UnsafeMutableRawPointer?) {
 // MARK: - Helper Methods
 
 extension VpnContext {
-  // Extract VpnContext from C callback pointer
+  /// Extracts the VpnContext from a C callback privdata pointer.
+  ///
+  /// - Parameter privdata: The opaque pointer passed to C callbacks
+  /// - Returns: The VpnContext instance
   static func extractContext(from privdata: UnsafeMutableRawPointer) -> VpnContext {
     return Unmanaged<VpnContext>.fromOpaque(privdata).takeUnretainedValue()
   }
 
-  // Find vpnc-script: use configured path or search common locations
-  internal func findVpncScript() throws -> String {
-
+  /// Finds the vpnc-script executable.
+  ///
+  /// Uses the configured path if set, otherwise searches common locations.
+  ///
+  /// - Returns: The path to the vpnc-script, or `nil` if not found
+  internal func findVpncScript() -> String? {
     if let configuredPath = session.configuration.vpncScript {
       guard FileManager.default.isExecutableFile(atPath: configuredPath) else {
-        throw VpnError.vpncScriptFailed
+        return nil
       }
       return configuredPath
     }
@@ -183,6 +194,6 @@ extension VpnContext {
       }
     }
 
-    throw VpnError.vpncScriptFailed
+    return nil
   }
 }

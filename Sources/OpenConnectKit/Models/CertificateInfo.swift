@@ -24,7 +24,7 @@ import Foundation
 ///     return true  // Accept despite issues
 /// }
 /// ```
-public struct CertificateInfo {
+public struct CertificateInfo: Sendable {
   // MARK: - Properties
 
   /// The validation failure reason provided by OpenConnect.

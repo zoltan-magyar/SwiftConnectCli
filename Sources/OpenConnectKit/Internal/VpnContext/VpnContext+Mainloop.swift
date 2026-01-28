@@ -11,51 +11,40 @@ import Foundation
 // MARK: - Mainloop Management
 
 extension VpnContext {
-  // Start mainloop on background thread. Returns immediately.
+  /// Starts the mainloop on a background task.
+  ///
+  /// The mainloop handles all VPN traffic and reconnection logic.
+  /// It runs until cancelled or an error occurs.
   internal func startMainloop() {
-    stateLock.lock()
-
-    mainloopThread = Thread { [weak self] in
-      guard let self = self else { return }
-      // Status set to .connected in setupTunCallback after TUN setup
-      self.runMainloopThread()
+    mainloopTask = Task.detached { [weak self] in
+      self?.runMainloop()
     }
-    mainloopThread?.name = "com.openconnect.mainloop"
-    mainloopThread?.start()
-
-    stateLock.unlock()
   }
 
-  // Stop mainloop via cancel command. Waits up to 5s.
+  /// Stops the mainloop by sending a cancel command.
+  ///
+  /// The mainloop will exit gracefully after processing the cancel command.
   internal func stopMainloop() {
-    stateLock.lock()
     guard case .connected = connectionStatus else {
-      stateLock.unlock()
       return
     }
-    stateLock.unlock()
 
     sendCommand(.cancel)
-
-    let deadline = Date().addingTimeInterval(5.0)
-    let semaphore = DispatchSemaphore(value: 0)
-
-    while Date() < deadline {
-      stateLock.lock()
-      if case .disconnected = connectionStatus {
-        stateLock.unlock()
-        break
-      }
-      stateLock.unlock()
-      _ = semaphore.wait(timeout: .now() + 0.1)
-    }
-
-    mainloopThread = nil
   }
 
-  // Mainloop execution. Loops until error or cancel.
-  private func runMainloopThread() {
-    while true {
+  /// Runs the mainloop until error or cancellation.
+  ///
+  /// This method blocks the current thread while the mainloop is running.
+  /// It should only be called from a background task.
+  private func runMainloop() {
+    guard let vpnInfo = vpnInfo else {
+      updateStatus(.disconnected(error: .notInitialized))
+      return
+    }
+
+    // Run the OpenConnect mainloop
+    // This blocks until the connection ends or is cancelled
+    while !Task.isCancelled {
       let ret = openconnect_mainloop(
         vpnInfo,
         session.configuration.reconnectTimeout,
@@ -67,19 +56,20 @@ extension VpnContext {
       }
     }
 
+    // Determine the disconnect reason
     let error: VpnError?
-    stateLock.lock()
     switch connectionStatus {
     case .disconnected:
-      stateLock.unlock()
+      // Already disconnected (user initiated)
       error = nil
     default:
-      stateLock.unlock()
+      // Unexpected disconnect - use setup error if available
       error = setupError ?? .connectionFailed(reason: "Connection lost")
     }
 
     updateStatus(.disconnected(error: error))
 
+    // Clear any captured setup error
     setupError = nil
   }
 }

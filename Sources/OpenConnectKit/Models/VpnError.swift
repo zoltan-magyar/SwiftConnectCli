@@ -8,7 +8,7 @@
 import Foundation
 
 /// Errors that can occur during VPN operations.
-public enum VpnError: Error {
+public enum VpnError: Error, Sendable {
   /// Failed to connect to the VPN server.
   ///
   /// - Parameter reason: A description of why the connection failed

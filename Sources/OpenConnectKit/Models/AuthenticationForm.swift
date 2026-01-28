@@ -33,7 +33,7 @@ import Foundation
 ///     return filledForm
 /// }
 /// ```
-public struct AuthenticationForm {
+public struct AuthenticationForm: Sendable {
   // MARK: - Properties
 
   /// The form title.

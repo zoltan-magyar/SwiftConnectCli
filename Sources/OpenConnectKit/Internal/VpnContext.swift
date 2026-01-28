@@ -13,29 +13,37 @@ import Foundation
 #endif
 
 // Internal context managing OpenConnect C API
-internal class VpnContext {
+//
+// This is a class (not actor) because C callbacks require synchronous access
+// to properties. The @unchecked Sendable conformance acknowledges that we're
+// managing thread safety manually through the C library's threading model.
+internal final class VpnContext: @unchecked Sendable {
   // MARK: - Properties
 
-  internal var connectionStatus: ConnectionStatus = .disconnected(error: nil)
-  internal let stateLock = NSLock()
-  internal var status: ConnectionStatus {
-    stateLock.lock()
-    defer { stateLock.unlock() }
-    return connectionStatus
-  }
+  // Properties accessed from C callbacks must be nonisolated(unsafe)
+  // Thread safety is managed by OpenConnect's internal threading model
 
-  internal var vpnInfo: OpaquePointer!
-  internal unowned let session: VpnSession
+  /// Connection status - accessed from callbacks and mainloop
+  nonisolated(unsafe) internal var connectionStatus: ConnectionStatus = .disconnected(error: nil)
+
+  /// OpenConnect vpninfo structure - managed by C library
+  nonisolated(unsafe) internal var vpnInfo: OpaquePointer!
+
+  /// Reference to owning session - only read from callbacks, never mutated
+  nonisolated(unsafe) internal unowned let session: VpnSession
 
   // Command pipe for controlling mainloop (OC_CMD_*)
   #if os(Windows)
-    internal var cmdFd: SOCKET!
+    nonisolated(unsafe) internal var cmdFd: SOCKET!
   #else
-    internal var cmdFd: Int32!
+    nonisolated(unsafe) internal var cmdFd: Int32!
   #endif
 
-  internal var mainloopThread: Thread?
-  internal var setupError: VpnError?
+  /// Mainloop task handle
+  nonisolated(unsafe) internal var mainloopTask: Task<Void, Never>?
+
+  /// Error captured during TUN setup callback
+  nonisolated(unsafe) internal var setupError: VpnError?
 
   // MARK: - Command Types
 
@@ -81,6 +89,8 @@ internal class VpnContext {
     // Parse and validate server URL
     let ret = openconnect_parse_url(vpnInfo, session.configuration.serverURL.absoluteString)
     if ret != 0 {
+      openconnect_vpninfo_free(vpnInfo)
+      self.vpnInfo = nil
       throw VpnError.invalidConfiguration(reason: "Failed to parse server URL")
     }
 
@@ -88,10 +98,14 @@ internal class VpnContext {
     let cmdFdResult = openconnect_setup_cmd_pipe(vpnInfo)
     #if os(Windows)
       if cmdFdResult == INVALID_SOCKET {
+        openconnect_vpninfo_free(vpnInfo)
+        self.vpnInfo = nil
         throw VpnError.cmdPipeSetupFailed
       }
     #else
       if cmdFdResult < 0 {
+        openconnect_vpninfo_free(vpnInfo)
+        self.vpnInfo = nil
         throw VpnError.cmdPipeSetupFailed
       }
     #endif
@@ -104,21 +118,48 @@ internal class VpnContext {
   }
 
   deinit {
-    disconnect()
-    openconnect_vpninfo_free(vpnInfo)
+    cleanup()
   }
 
-  // MARK: - Public Computed Properties
+  // MARK: - Cleanup
+
+  /// Cleans up OpenConnect resources.
+  ///
+  /// This method is safe to call multiple times.
+  internal func cleanup() {
+    // Cancel mainloop task if running
+    mainloopTask?.cancel()
+    mainloopTask = nil
+
+    // Free OpenConnect resources
+    if vpnInfo != nil {
+      openconnect_vpninfo_free(vpnInfo)
+      vpnInfo = nil
+    }
+
+    // Reset command pipe
+    #if os(Windows)
+      cmdFd = INVALID_SOCKET
+    #else
+      cmdFd = -1
+    #endif
+  }
+
+  // MARK: - Computed Properties
 
   internal var isCmdPipeReady: Bool {
     #if os(Windows)
-      return cmdFd != INVALID_SOCKET
+      return cmdFd != nil && cmdFd != INVALID_SOCKET
     #else
-      return cmdFd >= 0
+      return cmdFd != nil && cmdFd >= 0
     #endif
   }
 
   internal var assignedInterfaceName: String? {
+    guard let vpnInfo = vpnInfo else {
+      return nil
+    }
+
     guard let ifnamePtr = openconnect_get_ifname(vpnInfo) else {
       return nil
     }

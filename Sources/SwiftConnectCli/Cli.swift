@@ -16,7 +16,7 @@ import OpenConnectKit
 #endif
 
 // Simple class to manage signal handlers and timers
-class SignalManager {
+final class SignalManager {
   private var signalSources: [DispatchSourceSignal] = []
   private var statsTimer: DispatchSourceTimer?
 
@@ -31,12 +31,6 @@ class SignalManager {
 
 @main
 struct Cli: ParsableCommand {
-  // Signal and timer manager for resource handling
-  private static var signalManager: SignalManager?
-
-  // Delegate handler for VPN session events
-  private static var sessionHandler: CliVpnHandler?
-
   static let configuration = CommandConfiguration(
     commandName: "swiftconnect-cli",
     abstract: "A Swift CLI for OpenConnect VPN",
@@ -126,7 +120,6 @@ struct Cli: ParsableCommand {
 
     // Create delegate handler
     let handler = CliVpnHandler()
-    Cli.sessionHandler = handler
 
     // Create VPN session with delegate
     let session = VpnSession(configuration: config, delegate: handler)
@@ -134,8 +127,11 @@ struct Cli: ParsableCommand {
     // Set optional logging delegate
     session.loggingDelegate = handler
 
+    // Create signal manager for resource handling
+    let signalManager = SignalManager()
+
     // Set up signal handlers for graceful shutdown
-    setupSignalHandlers(session: session)
+    setupSignalHandlers(session: session, signalManager: signalManager)
 
     print("Connecting to VPN...\n")
 
@@ -154,7 +150,7 @@ struct Cli: ParsableCommand {
       print()
 
       // Start periodic stats updates
-      startPeriodicStats(session: session)
+      startPeriodicStats(session: session, signalManager: signalManager)
 
       // Block on main dispatch queue (signal handlers will exit)
       // Note: dispatchMain() never returns - program exits via signal handlers
@@ -177,7 +173,7 @@ struct Cli: ParsableCommand {
 
   // MARK: - Connection Monitoring
 
-  private func startPeriodicStats(session: VpnSession) {
+  private func startPeriodicStats(session: VpnSession, signalManager: SignalManager) {
     // Request stats every 10 seconds on a background queue
     let timer = DispatchSource.makeTimerSource(queue: .global())
     timer.schedule(deadline: .now(), repeating: .seconds(10))
@@ -187,14 +183,10 @@ struct Cli: ParsableCommand {
     timer.resume()
 
     // Store timer in the signal manager
-    Cli.signalManager?.setStatsTimer(timer)
+    signalManager.setStatsTimer(timer)
   }
 
-  private func setupSignalHandlers(session: VpnSession) {
-    // Create signal manager if it doesn't exist
-    if Cli.signalManager == nil {
-      Cli.signalManager = SignalManager()
-    }
+  private func setupSignalHandlers(session: VpnSession, signalManager: SignalManager) {
 
     // Ignore default signal handlers
     signal(SIGINT, SIG_IGN)
@@ -214,7 +206,7 @@ struct Cli: ParsableCommand {
     sigintSource.resume()
 
     // Store signal source in the manager
-    Cli.signalManager?.addSignalSource(sigintSource)
+    signalManager.addSignalSource(sigintSource)
 
     // Handle SIGTERM
     let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
@@ -230,14 +222,14 @@ struct Cli: ParsableCommand {
     sigtermSource.resume()
 
     // Store signal source in the manager
-    Cli.signalManager?.addSignalSource(sigtermSource)
+    signalManager.addSignalSource(sigtermSource)
   }
 }
 
 // MARK: - VPN Session Delegate Handler
 
 /// Handles VPN session events for the CLI application
-class CliVpnHandler: VpnSessionDelegate, VpnSessionLoggingDelegate {
+final class CliVpnHandler: VpnSessionDelegate, VpnSessionLoggingDelegate {
 
   // MARK: - VpnSessionDelegate
 

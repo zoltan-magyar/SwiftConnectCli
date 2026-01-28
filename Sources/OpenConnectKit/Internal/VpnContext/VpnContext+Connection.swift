@@ -11,17 +11,18 @@ import Foundation
 // MARK: - Connection Management
 
 extension VpnContext {
-  // Connects to VPN: auth cookie → CSTP → DTLS → TUN setup (via callback) → mainloop
+  /// Connects to VPN: auth cookie → CSTP → DTLS → TUN setup (via callback) → mainloop
+  ///
+  /// This method blocks during the authentication and connection setup phases.
+  /// The mainloop runs on a background task after setup completes.
+  ///
+  /// - Throws: `VpnError` if connection fails at any step
   func connect() throws {
-    stateLock.lock()
     guard case .disconnected = connectionStatus else {
-      stateLock.unlock()
       return
     }
-    connectionStatus = .connecting(stage: "Initializing connection")
-    stateLock.unlock()
 
-    session.handleStatusChange(status: .connecting(stage: "Initializing connection"))
+    updateStatus(.connecting(stage: "Initializing connection"))
 
     updateStatus(.connecting(stage: "Authenticating..."))
     var ret = openconnect_obtain_cookie(vpnInfo)
@@ -47,26 +48,25 @@ extension VpnContext {
     startMainloop()
   }
 
-  // Disconnect: stop mainloop → cleanup
+  /// Disconnects from the VPN.
+  ///
+  /// This method sends a cancel command to the mainloop and updates status.
+  /// The actual cleanup happens when the mainloop exits.
   func disconnect() {
-    stateLock.lock()
     if case .disconnected = connectionStatus {
-      stateLock.unlock()
       return
     }
-    stateLock.unlock()
 
     stopMainloop()
 
     updateStatus(.disconnected(error: nil))
   }
 
-  // Thread-safe status update
+  /// Updates the connection status and notifies the session delegate.
+  ///
+  /// - Parameter status: The new connection status
   internal func updateStatus(_ status: ConnectionStatus) {
-    stateLock.lock()
     connectionStatus = status
-    stateLock.unlock()
-
     session.handleStatusChange(status: status)
   }
 }
