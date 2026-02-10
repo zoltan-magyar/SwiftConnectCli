@@ -13,8 +13,8 @@ import Foundation
 /// OpenConnect VPN connections. All C interop is handled internally, exposing
 /// a clean, type-safe interface.
 ///
-/// **Thread Safety**: All methods are thread-safe. Delegate methods may be invoked
-/// on background threads - use `DispatchQueue.main.async` when updating UI.
+/// **Thread Safety**: Delegate methods may be invoked on background threads.
+/// Use `DispatchQueue.main.async` when updating UI.
 ///
 /// ## Example Usage
 ///
@@ -55,7 +55,7 @@ public class VpnSession {
   /// Use the delegate's `vpnSession(_:didChangeStatus:)` method to receive
   /// real-time updates when the status changes.
   public var connectionStatus: ConnectionStatus {
-    return context?.status ?? .disconnected(error: nil)
+    return context?.connectionStatus ?? .disconnected(error: nil)
   }
 
   /// The name of the network interface assigned to the VPN tunnel.
@@ -135,6 +135,7 @@ public class VpnSession {
   /// 2. Obtains an authentication cookie (may trigger delegate authentication callback)
   /// 3. Establishes the CSTP connection
   /// 4. Sets up DTLS for the data channel
+  /// 5. Starts the mainloop on a background thread
   ///
   /// The delegate's `vpnSession(_:didChangeStatus:)` method will be called
   /// throughout the connection process to report progress.
@@ -151,6 +152,7 @@ public class VpnSession {
       throw VpnError.alreadyConnected
     }
 
+    // Create context if needed
     if context == nil {
       context = try VpnContext(session: self)
     }
@@ -173,6 +175,7 @@ public class VpnSession {
     }
 
     context?.disconnect()
+    context?.cleanup()
     context = nil
   }
 

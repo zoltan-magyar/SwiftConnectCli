@@ -21,7 +21,7 @@ import Foundation
 ///     logLevel: .info
 /// )
 /// ```
-public struct VpnConfiguration {
+public struct VpnConfiguration: Sendable {
   // MARK: - Properties
 
   /// The VPN server URL (e.g., `https://vpn.example.com`).

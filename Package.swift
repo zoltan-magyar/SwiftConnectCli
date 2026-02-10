@@ -1,4 +1,4 @@
-// swift-tools-version: 6.2.1
+// swift-tools-version: 6.2.3
 import PackageDescription
 
 let package = Package(
@@ -31,7 +31,7 @@ let package = Package(
       name: "OpenConnectKit",
       dependencies: ["COpenConnect"],
       swiftSettings: [
-        .swiftLanguageMode(.v5)
+        .enableUpcomingFeature("NonisolatedNonsendingByDefault")
       ]
     ),
     .executableTarget(
@@ -41,7 +41,7 @@ let package = Package(
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
       ],
       swiftSettings: [
-        .swiftLanguageMode(.v5)
+        .enableUpcomingFeature("NonisolatedNonsendingByDefault")
       ]
     ),
   ]

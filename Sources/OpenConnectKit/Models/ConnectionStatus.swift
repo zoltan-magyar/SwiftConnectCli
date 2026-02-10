@@ -31,7 +31,7 @@ import Foundation
 ///     print("Attempting to reconnect...")
 /// }
 /// ```
-public enum ConnectionStatus: Equatable {
+public enum ConnectionStatus: Equatable, Sendable {
   /// The VPN is disconnected.
   ///
   /// The associated `VpnError` indicates why the disconnection occurred:
