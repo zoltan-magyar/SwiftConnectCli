@@ -1,5 +1,0 @@
-module COpenConnect {
-    use COpenConnectLib
-    header "COpenConnect.h"
-    export *
-}
