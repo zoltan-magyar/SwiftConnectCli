@@ -9,7 +9,8 @@ let package = Package(
   ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
-    .package(path: "../OpenConnectKit"),
+    //.package(path: "../OpenConnectKit"),
+    .package(url: "https://github.com/zoltan-magyar/OpenConnectKit.git"),
   ],
   targets: [
     .executableTarget(
