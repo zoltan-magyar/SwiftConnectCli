@@ -9,26 +9,6 @@ import ArgumentParser
 import Foundation
 import OpenConnectKit
 
-#if canImport(Darwin)
-  import Darwin
-#elseif canImport(Glibc)
-  import Glibc
-#endif
-
-// Simple class to manage signal handlers and timers
-final class SignalManager {
-  private var signalSources: [DispatchSourceSignal] = []
-  private var statsTimer: DispatchSourceTimer?
-
-  func addSignalSource(_ source: DispatchSourceSignal) {
-    signalSources.append(source)
-  }
-
-  func setStatsTimer(_ timer: DispatchSourceTimer) {
-    statsTimer = timer
-  }
-}
-
 @main
 struct Cli: ParsableCommand {
   static let configuration = CommandConfiguration(
@@ -127,12 +107,6 @@ struct Cli: ParsableCommand {
     // Set optional logging delegate
     session.loggingDelegate = handler
 
-    // Create signal manager for resource handling
-    let signalManager = SignalManager()
-
-    // Set up signal handlers for graceful shutdown
-    setupSignalHandlers(session: session, signalManager: signalManager)
-
     print("Connecting to VPN...\n")
 
     // Connect to VPN
@@ -150,10 +124,9 @@ struct Cli: ParsableCommand {
       print()
 
       // Start periodic stats updates
-      startPeriodicStats(session: session, signalManager: signalManager)
+      startPeriodicStats(session: session)
 
-      // Block on main dispatch queue (signal handlers will exit)
-      // Note: dispatchMain() never returns - program exits via signal handlers
+      // Block on main dispatch queue
       dispatchMain()
 
     } catch let error as VpnError {
@@ -173,7 +146,7 @@ struct Cli: ParsableCommand {
 
   // MARK: - Connection Monitoring
 
-  private func startPeriodicStats(session: VpnSession, signalManager: SignalManager) {
+  private func startPeriodicStats(session: VpnSession) {
     // Request stats every 10 seconds on a background queue
     let timer = DispatchSource.makeTimerSource(queue: .global())
     timer.schedule(deadline: .now(), repeating: .seconds(10))
@@ -181,48 +154,6 @@ struct Cli: ParsableCommand {
       session.requestStats()
     }
     timer.resume()
-
-    // Store timer in the signal manager
-    signalManager.setStatsTimer(timer)
-  }
-
-  private func setupSignalHandlers(session: VpnSession, signalManager: SignalManager) {
-
-    // Ignore default signal handlers
-    signal(SIGINT, SIG_IGN)
-    signal(SIGTERM, SIG_IGN)
-
-    // Handle SIGINT (Ctrl+C)
-    let sigintSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
-    sigintSource.setEventHandler {
-      print("\n" + String(repeating: "=", count: 60))
-      print("🛑 Received interrupt signal, disconnecting...")
-      session.disconnect()
-      print("✅ Disconnected successfully")
-      print(String(repeating: "=", count: 60))
-      print()
-      Foundation.exit(0)
-    }
-    sigintSource.resume()
-
-    // Store signal source in the manager
-    signalManager.addSignalSource(sigintSource)
-
-    // Handle SIGTERM
-    let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-    sigtermSource.setEventHandler {
-      print("\n" + String(repeating: "=", count: 60))
-      print("🛑 Received termination signal, disconnecting...")
-      session.disconnect()
-      print("✅ Disconnected successfully")
-      print(String(repeating: "=", count: 60))
-      print()
-      Foundation.exit(0)
-    }
-    sigtermSource.resume()
-
-    // Store signal source in the manager
-    signalManager.addSignalSource(sigtermSource)
   }
 }
 
