@@ -123,6 +123,25 @@ struct Cli: ParsableCommand {
       print("Press Ctrl+C to disconnect...")
       print()
 
+      // Set up signal handlers for graceful disconnect.
+      // Suppress default signal behaviour so we can handle it ourselves.
+      signal(SIGINT, SIG_IGN)
+      signal(SIGTERM, SIG_IGN)
+
+      let sigintSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+      sigintSource.setEventHandler {
+        print("\n\nDisconnecting...")
+        session.disconnect()
+      }
+      sigintSource.resume()
+
+      let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+      sigtermSource.setEventHandler {
+        print("\n\nDisconnecting...")
+        session.disconnect()
+      }
+      sigtermSource.resume()
+
       // Start periodic stats updates
       startPeriodicStats(session: session)
 
