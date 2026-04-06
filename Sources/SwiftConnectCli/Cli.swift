@@ -191,6 +191,9 @@ final class CliVpnHandler: VpnSessionDelegate, VpnSessionLoggingDelegate {
     )
 
     switch status {
+    case .disconnecting:
+      print("[\(timestamp)] 🔄 Status: Disconnecting...")
+
     case .disconnected(let error):
       print("\n" + String(repeating: "=", count: 60))
       if let error = error {
